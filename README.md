@@ -103,12 +103,11 @@ cd D:\AI\whalelife
 
 控制台停用「日程」→ 删除 `plugins/schedule/`（想连数据一起清就删掉目录里的 `data/`）→ 重启 WhaleLife。
 
-
 ## 手动安装
 
-1. 下载本仓库（git clone 或 Code → Download ZIP）。
-2. 把仓库内容放进 WhaleLife 本体的 plugins\schedule\ 目录；**目录名必须是 $id**（manifest 要求 id 与目录同名）。
+1. 下载本仓库（`git clone` 或 Code → Download ZIP）。
+2. 把仓库内容放进 WhaleLife 本体的 `plugins/schedule/` 目录；**目录名必须是 `schedule`**（manifest 要求 id 与目录同名）。
 3. 重启本体，或到控制台「插件管理」里重载该插件。
 4. 在「插件管理」确认状态为「运行中」；首次使用请打开插件设置页完成必要配置。
 
-本插件不包含任何运行时数据（data/ 已被忽略），升级时直接覆盖源码即可保留你自己的配置。
+本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。
