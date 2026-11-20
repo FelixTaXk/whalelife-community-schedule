@@ -1,0 +1,199 @@
+/*! 日程 plugin · 设置页。 */
+
+import type { Config } from '../lib/types.ts';
+import { PRESETS } from '../lib/types.ts';
+import { BASE_CSS, escapeHtml } from './theme.ts';
+
+export type SettingsData = {
+  config: Config;
+  fixedText: string;
+  hobbiesText: string;
+  models: Array<{ id: string; name: string; callable: boolean }>;
+  status: { lastError: string; lastTickAt: string };
+  weather: { available: boolean; summary: string };
+  today: string;
+  version: string;
+};
+
+const WEEK = ['一', '二', '三', '四', '五', '六', '日'];
+
+function chips(name: string, selected: number[]): string {
+  return WEEK.map((label, index) => {
+    const value = index + 1;
+    const checked = selected.includes(value) ? ' checked' : '';
+    return `<label class="chip"><input type="checkbox" name="${name}" value="${value}"${checked}>周${label}</label>`;
+  }).join('');
+}
+
+function options(models: SettingsData['models'], selected: string): string {
+  const list = models.map((model) => `<option value="${escapeHtml(model.id)}"${model.id === selected ? ' selected' : ''}>${escapeHtml(model.name)}${model.callable ? '' : '（当前不可调用）'}</option>`);
+  return `<option value=""${selected ? '' : ' selected'}>不选择（只用规则骨架）</option>${list.join('')}`;
+}
+
+export function settingsPage(data: SettingsData): string {
+  const { config: cfg, fixedText, hobbiesText, models, status } = data;
+  const presetOptions = PRESETS.map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)} · ${escapeHtml(preset.hint)}</option>`).join('');
+  const aiHint = models.length
+    ? '开启后会调用所选模型，把空档换成具体安排（每次约一次请求，45 秒超时；失败保留规则骨架）。'
+    : '当前没有可用的对话模型：先在 WhaleLife 的「模型」页配好一个 OpenAI 兼容的对话模型，再回来选。';
+  const tickLine = status.lastTickAt
+    ? `上次自动检查：${escapeHtml(new Date(status.lastTickAt).toLocaleString('zh-CN'))}`
+    : '还没跑过自动检查（启用后每分钟检查一次）。';
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>日程 · 设置</title><style>${BASE_CSS}</style></head><body><main>
+<header>
+  <div>
+    <h1>日程</h1>
+    <p class="sub">按作息自动排一天的安排 · v${escapeHtml(data.version)} · 今天 ${escapeHtml(data.today)}</p>
+  </div>
+  <div class="row" style="margin:0"><button type="button" id="regen">重排今天</button></div>
+</header>
+
+${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${escapeHtml(status.lastError)}</div>` : ''}
+
+<section class="card">
+  <h2>天气 <span class="pill ${data.weather.available ? 'good' : 'warn'}">${data.weather.available ? '子插件已连接' : '子插件未启用'}</span></h2>
+  <p class="hint" style="white-space:pre-line;margin:0 0 10px">${escapeHtml(data.weather.summary)}</p>
+  <p class="hint" style="margin:0 0 10px">生成日程时会参考当天天气：雨雪、雷暴、高温把运动和户外空档改成室内；周末天气好会留一段出门时间。预报类别变化会自动重排，手动改过的计划不动。</p>
+  ${data.weather.available ? '<a href="/plugins/schedule/weather/settings" style="text-decoration:none"><button type="button">打开天气设置</button></a>' : ''}
+</section>
+
+<form id="form">
+<section class="card">
+  <h2>自动生成 <span class="pill ${cfg.enabled ? 'good' : ''}">${cfg.enabled ? '已开启' : '已关闭'}</span></h2>
+  <div class="grid">
+    <label class="check wide"><input type="checkbox" name="enabled"${cfg.enabled ? ' checked' : ''}> 启用自动生成（关掉后不再新建日程，已有计划仍可查看）</label>
+    <label>每天生成时间<input type="time" name="generateAt" value="${escapeHtml(cfg.generateAt)}"></label>
+    <label>预生成天数（含今天）<input type="number" name="daysAhead" min="1" max="7" value="${cfg.daysAhead}"></label>
+    <label>历史保留天数<input type="number" name="keepDays" min="7" max="365" value="${cfg.keepDays}"></label>
+  </div>
+  <p class="hint">${tickLine} 过了生成时间会补上今天和后面几天；跨天打开软件会先补今天。</p>
+</section>
+
+<section class="card">
+  <h2>作息</h2>
+  <div class="row" style="margin:0 0 14px">
+    <select id="preset" style="max-width:340px">${presetOptions}</select>
+    <button type="button" id="applyPreset">套用模板</button>
+    <span class="hint" style="margin:0">模板会覆盖下面所有作息字段，AI 与保留天数不变。</span>
+  </div>
+  <div class="grid3">
+    <label>起床<input type="time" name="wake" value="${escapeHtml(cfg.routine.wake)}"></label>
+    <label>睡觉<input type="time" name="sleep" value="${escapeHtml(cfg.routine.sleep)}"></label>
+    <label>起床后洗漱（分钟）<input type="number" name="wakeMinutes" min="10" max="180" value="${cfg.routine.wakeMinutes}"></label>
+    <label>早餐（分钟，0 = 不排）<input type="number" name="breakfastMinutes" min="0" max="120" value="${cfg.routine.breakfastMinutes}"></label>
+    <label>单程通勤（分钟）<input type="number" name="commuteMinutes" min="0" max="180" value="${cfg.routine.commuteMinutes}"></label>
+    <label>睡前洗漱（分钟）<input type="number" name="windDownMinutes" min="0" max="120" value="${cfg.routine.windDownMinutes}"></label>
+  </div>
+  <p class="hint">睡觉早于起床时间时按「次日」算，晚上会留出睡前洗漱，末尾显示睡觉时间。</p>
+</section>
+
+<section class="card">
+  <h2>正事（上课 / 上班）</h2>
+  <div class="grid">
+    <label class="check wide"><input type="checkbox" name="workEnabled"${cfg.routine.work.enabled ? ' checked' : ''}> 这几天要上课 / 上班</label>
+    <label>名称<input type="text" name="workTitle" maxlength="12" value="${escapeHtml(cfg.routine.work.title)}" placeholder="上课 / 上班"></label>
+    <label>地点<input type="text" name="workPlace" maxlength="20" value="${escapeHtml(cfg.routine.work.place)}" placeholder="学校 / 公司"></label>
+    <label>开始<input type="time" name="workStart" value="${escapeHtml(cfg.routine.work.start)}"></label>
+    <label>结束<input type="time" name="workEnd" value="${escapeHtml(cfg.routine.work.end)}"></label>
+    <div class="wide"><span class="muted">哪几天</span><div class="days" style="margin-top:6px">${chips('workDays', cfg.routine.work.days)}</div></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>三餐与运动</h2>
+  <div class="grid3">
+    <label class="check"><input type="checkbox" name="lunchEnabled"${cfg.routine.lunch.enabled ? ' checked' : ''}> 排午饭</label>
+    <label>午饭时间<input type="time" name="lunchStart" value="${escapeHtml(cfg.routine.lunch.start)}"></label>
+    <label>午饭时长（分钟）<input type="number" name="lunchMinutes" min="10" max="240" value="${cfg.routine.lunch.minutes}"></label>
+    <label class="check"><input type="checkbox" name="dinnerEnabled"${cfg.routine.dinner.enabled ? ' checked' : ''}> 排晚饭</label>
+    <label>晚饭时间<input type="time" name="dinnerStart" value="${escapeHtml(cfg.routine.dinner.start)}"></label>
+    <label>晚饭时长（分钟）<input type="number" name="dinnerMinutes" min="10" max="240" value="${cfg.routine.dinner.minutes}"></label>
+    <label class="check"><input type="checkbox" name="exerciseEnabled"${cfg.routine.exercise.enabled ? ' checked' : ''}> 排运动</label>
+    <label>运动名称<input type="text" name="exerciseTitle" maxlength="12" value="${escapeHtml(cfg.routine.exercise.title)}"></label>
+    <label>运动时间<input type="time" name="exerciseStart" value="${escapeHtml(cfg.routine.exercise.start)}"></label>
+    <label>运动时长（分钟）<input type="number" name="exerciseMinutes" min="10" max="180" value="${cfg.routine.exercise.minutes}"></label>
+    <div class="wide"><span class="muted">哪几天运动</span><div class="days" style="margin-top:6px">${chips('exerciseDays', cfg.routine.exercise.days)}</div></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>固定安排 <span class="pill">可选</span></h2>
+  <label>每行一条：标题 | 星期 | 开始 | 分钟 | 地点
+    <textarea name="fixedText" spellcheck="false" placeholder="买糖葫芦 | 1,3,5 | 17:20 | 20 | 校门口&#10;和同桌约画 | 6 | 15:00 | 90 | 图书馆">${escapeHtml(fixedText)}</textarea>
+  </label>
+  <p class="hint">星期写 1–7（周一 = 1），或 每天 / 工作日 / 周末。固定安排优先级最高，会和正事、三餐自动让位。</p>
+  <label>爱好池（空档从这里轮着挑，一行一个或用顿号分隔）
+    <textarea name="hobbies" spellcheck="false">${escapeHtml(hobbiesText)}</textarea>
+  </label>
+</section>
+
+<section class="card">
+  <h2>AI 润色 <span class="pill ${cfg.ai.enabled ? 'warn' : ''}">${cfg.ai.enabled ? '已开启' : '默认关闭'}</span></h2>
+  <div class="grid">
+    <label class="check wide"><input type="checkbox" name="aiEnabled" id="aiEnabled"${cfg.ai.enabled ? ' checked' : ''}> 用模型把空档换成更具体的安排</label>
+    <label>模型<select name="aiModel" id="aiModel">${options(models, cfg.ai.model)}</select></label>
+    <label>额外要求（可空）<textarea name="aiStyle" maxlength="300" placeholder="例如：晚上尽量别排新的事，留给画画；周末可以出去走走。">${escapeHtml(cfg.ai.style)}</textarea></label>
+  </div>
+  <p class="hint">${aiHint}</p>
+</section>
+
+<div class="row">
+  <button class="primary" type="submit">保存设置</button>
+  <span class="msg" id="msg" role="status"></span>
+</div>
+</form>
+</main>
+<script>
+const API='/plugins/schedule/';
+const msg=document.getElementById('msg');
+const form=document.getElementById('form');
+const today=${JSON.stringify(data.today)};
+function setMsg(text,bad){msg.textContent=text;msg.style.color=bad?'var(--bad)':'var(--muted)';}
+function val(name){const el=form.querySelector('[name="'+name+'"]');return el?el.value:''}
+function num(name){const n=Number(val(name));return Number.isFinite(n)?n:0}
+function checked(name){const el=form.querySelector('[name="'+name+'"]');return !!(el&&el.checked)}
+function days(name){return [...form.querySelectorAll('[name="'+name+'"]:checked')].map(e=>Number(e.value))}
+async function post(path,body){
+  const res=await fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok)throw new Error(data.error||('HTTP '+res.status));
+  return data;
+}
+form.onsubmit=async(e)=>{
+  e.preventDefault();
+  const button=e.submitter;if(button)button.disabled=true;
+  setMsg('正在保存…');
+  try{
+    const config={enabled:checked('enabled'),generateAt:val('generateAt'),daysAhead:num('daysAhead'),keepDays:num('keepDays'),
+      ai:{enabled:checked('aiEnabled'),model:val('aiModel'),style:val('aiStyle')},
+      routine:{wake:val('wake'),sleep:val('sleep'),wakeMinutes:num('wakeMinutes'),breakfastMinutes:num('breakfastMinutes'),
+        commuteMinutes:num('commuteMinutes'),windDownMinutes:num('windDownMinutes'),
+        work:{enabled:checked('workEnabled'),title:val('workTitle'),days:days('workDays'),start:val('workStart'),end:val('workEnd'),place:val('workPlace')},
+        lunch:{enabled:checked('lunchEnabled'),start:val('lunchStart'),minutes:num('lunchMinutes')},
+        dinner:{enabled:checked('dinnerEnabled'),start:val('dinnerStart'),minutes:num('dinnerMinutes')},
+        exercise:{enabled:checked('exerciseEnabled'),title:val('exerciseTitle'),days:days('exerciseDays'),start:val('exerciseStart'),minutes:num('exerciseMinutes')},
+      }};
+    const r=await post('config',{action:'save',config,fixedText:val('fixedText'),hobbiesText:val('hobbies')});
+    setMsg(r.warnings&&r.warnings.length?'已保存，有提醒：'+r.warnings.join('；'):'已保存。今天和后面的计划会按新作息补排。');
+  }catch(error){setMsg('没保存：'+error.message,true)}
+  finally{if(button)button.disabled=false}
+};
+const aiEnabled=document.getElementById('aiEnabled'),aiModel=document.getElementById('aiModel');
+function syncAi(){aiModel.disabled=!aiEnabled.checked}
+aiEnabled.onchange=syncAi;syncAi();
+document.getElementById('applyPreset').onclick=async()=>{
+  const preset=document.getElementById('preset').value;
+  if(!confirm('套用模板会覆盖当前作息字段（起床、正事、三餐、运动、爱好、固定安排）。继续？'))return;
+  setMsg('正在套用…');
+  try{await post('config',{action:'preset',preset});location.reload()}
+  catch(error){setMsg('没套用成：'+error.message,true)}
+};
+document.getElementById('regen').onclick=async()=>{
+  if(!confirm('按当前作息重排今天？手动改过的地方会被覆盖。'))return;
+  setMsg('正在重排…');
+  try{const r=await post('generate',{date:today,force:true});setMsg('今天已重排：'+r.plan.items.length+' 项。')}
+  catch(error){setMsg('重排失败：'+error.message,true)}
+};
+</script></body></html>`;
+}

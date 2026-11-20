@@ -1,0 +1,273 @@
+/*! 日程 plugin · 日程生成（纯函数，不碰网络和文件）。 */
+
+import { createHash } from 'node:crypto';
+import type { BlockKind, Config, Plan, PlanItem, Routine } from './types.ts';
+import { NOTES, TONES } from './types.ts';
+import {
+  MINUTES_PER_DAY, formatHHMM, hashSeed, isoWeekday, parseDateKey, parseHHMM, pick, weekdayLabel,
+} from './time.ts';
+
+export type Gap = { start: number; end: number };
+
+type Segment = {
+  start: number;
+  end: number;
+  title: string;
+  kind: BlockKind;
+  place?: string;
+  note?: string;
+  priority: number;
+  auto?: boolean;
+};
+
+/** 固定安排 1、三餐 2、正事 3、运动 4、通勤 5、起床/睡前 6；数字小的先占位。 */
+const PRIORITY = { fixed: 1, meal: 2, work: 3, exercise: 4, commute: 5, routine: 6 } as const;
+
+const REST_TITLES = ['歇一会儿', '泡杯茶', '躺一会儿', '发呆放空'] as const;
+const CHORE_TITLES = ['收拾一下桌子', '洗衣服', '整理照片', '顺手买点菜'] as const;
+
+export function routineHash(routine: Routine): string {
+  return createHash('sha256').update(JSON.stringify(routine)).digest('hex').slice(0, 12);
+}
+
+export function isStale(plan: Plan | null, config: Config): boolean {
+  return Boolean(plan && !plan.edited && plan.routineHash !== routineHash(config.routine));
+}
+
+function subtract(
+  list: Array<[number, number]>,
+  start: number,
+  end: number,
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const [left, right] of list) {
+    if (right <= start || left >= end) {
+      out.push([left, right]);
+      continue;
+    }
+    if (left < start) out.push([left, Math.min(right, start)]);
+    if (right > end) out.push([Math.max(left, end), right]);
+  }
+  return out.filter(([left, right]) => right - left >= 5);
+}
+
+function addSegment(placed: Segment[], segment: Segment) {
+  let pieces: Array<[number, number]> = [[segment.start, segment.end]];
+  for (const existing of placed) {
+    if (existing.priority <= segment.priority) pieces = subtract(pieces, existing.start, existing.end);
+  }
+  if (!pieces.length) return;
+  const kept: Segment[] = [];
+  for (const existing of placed) {
+    if (existing.priority < segment.priority) {
+      kept.push(existing);
+      continue;
+    }
+    let parts: Array<[number, number]> = [[existing.start, existing.end]];
+    for (const [left, right] of pieces) parts = subtract(parts, left, right);
+    for (const [left, right] of parts) if (right - left >= 5) kept.push({ ...existing, start: left, end: right });
+  }
+  placed.length = 0;
+  placed.push(...kept);
+  for (const [left, right] of pieces) {
+    if (right - left >= 5) placed.push({ ...segment, start: left, end: right });
+  }
+}
+
+function chunks(total: number): number[] {
+  const sizes: number[] = [];
+  let left = total;
+  while (left > 0) {
+    sizes.push(left <= 120 ? left : 90);
+    left -= sizes[sizes.length - 1];
+  }
+  if (sizes.length > 1 && sizes[sizes.length - 1] < 30) {
+    sizes[sizes.length - 2] += sizes.pop() as number;
+  }
+  return sizes;
+}
+
+function freePiece(index: number, seedText: string): { title: string; kind: BlockKind } {
+  const seed = hashSeed(`${seedText}|free|${index}`);
+  if (index % 5 === 4) return { title: pick(CHORE_TITLES, seed), kind: 'chore' };
+  if (index % 4 === 3) return { title: pick(REST_TITLES, seed), kind: 'rest' };
+  return { title: '', kind: 'free' };
+}
+
+/** 生成一天的日程骨架；空档已用自由安排铺好。 */
+export function generatePlan(config: Config, date: string): Plan {
+  const routine = config.routine;
+  const weekday = isoWeekday(parseDateKey(date));
+  const seed = hashSeed(`${date}|${routineHash(routine)}`);
+
+  const wake = parseHHMM(routine.wake) ?? 7 * 60;
+  const sleepRaw = parseHHMM(routine.sleep) ?? 23 * 60;
+  const sleepCap = sleepRaw <= wake ? MINUTES_PER_DAY : sleepRaw;
+  const sleepAt = sleepRaw <= wake ? `${formatHHMM(sleepRaw)}（次日）` : formatHHMM(sleepRaw);
+
+  const placed: Segment[] = [];
+  const anchors: Segment[] = [];
+
+  const anchor = (
+    start: number,
+    end: number,
+    title: string,
+    kind: BlockKind,
+    priority: number,
+    extra: { place?: string; note?: string } = {},
+  ) => {
+    if (!title || end - start < 5) return;
+    anchors.push({ start, end, title, kind, priority, place: extra.place, note: extra.note });
+  };
+
+  const wakeEnd = wake + routine.wakeMinutes;
+  anchor(wake, wakeEnd, '起床 · 洗漱', 'routine', PRIORITY.routine, { place: '家' });
+  if (routine.breakfastMinutes > 0) {
+    anchor(wakeEnd, wakeEnd + routine.breakfastMinutes, '早餐', 'meal', PRIORITY.meal, { place: '家' });
+  }
+
+  if (routine.work.enabled && routine.work.days.includes(weekday)) {
+    const start = parseHHMM(routine.work.start);
+    const end = parseHHMM(routine.work.end);
+    if (start !== null && end !== null && end - start >= 30) {
+      const commute = routine.commuteMinutes;
+      if (commute > 0) {
+        anchor(start - commute, start, `通勤 · 去${routine.work.place || routine.work.title}`, 'commute', PRIORITY.commute);
+      }
+      anchor(start, end, routine.work.place ? `${routine.work.title} · ${routine.work.place}` : routine.work.title, 'work', PRIORITY.work, {
+        place: routine.work.place,
+      });
+      if (commute > 0) anchor(end, end + commute, '通勤 · 回家', 'commute', PRIORITY.commute);
+    }
+  }
+
+  if (routine.lunch.enabled) {
+    const start = parseHHMM(routine.lunch.start);
+    if (start !== null) anchor(start, start + routine.lunch.minutes, '午饭', 'meal', PRIORITY.meal, { place: '' });
+  }
+  if (routine.dinner.enabled) {
+    const start = parseHHMM(routine.dinner.start);
+    if (start !== null) anchor(start, start + routine.dinner.minutes, '晚饭', 'meal', PRIORITY.meal, { place: '家' });
+  }
+  if (routine.exercise.enabled && routine.exercise.days.includes(weekday)) {
+    const start = parseHHMM(routine.exercise.start);
+    if (start !== null) anchor(start, start + routine.exercise.minutes, routine.exercise.title, 'exercise', PRIORITY.exercise);
+  }
+  for (const item of routine.fixed) {
+    if (!item.days.includes(weekday)) continue;
+    const start = parseHHMM(item.start);
+    if (start === null) continue;
+    anchor(start, start + item.minutes, item.title, 'fixed', PRIORITY.fixed, { place: item.place });
+  }
+  if (routine.windDownMinutes > 0) {
+    anchor(sleepCap - routine.windDownMinutes, sleepCap, '洗漱 · 准备睡', 'routine', PRIORITY.routine, { note: `睡觉 ${sleepAt}` });
+  }
+
+  anchors.sort((left, right) => left.priority - right.priority || left.start - right.start);
+  for (const segment of anchors) {
+    if (segment.start < wake) segment.start = wake;
+    if (segment.end > sleepCap) segment.end = sleepCap;
+    if (segment.end - segment.start < 5) continue;
+    addSegment(placed, segment);
+  }
+
+  const sorted = [...placed].sort((left, right) => left.start - right.start);
+  const gaps: Gap[] = [];
+  let cursor = wake;
+  for (const segment of sorted) {
+    if (segment.start > cursor) gaps.push({ start: cursor, end: segment.start });
+    cursor = Math.max(cursor, segment.end);
+  }
+  if (sleepCap > cursor) gaps.push({ start: cursor, end: sleepCap });
+
+  let freeIndex = 0;
+  for (const gap of gaps) {
+    const length = gap.end - gap.start;
+    if (length < 30) continue;
+    let start = gap.start;
+    for (const size of chunks(length)) {
+      const piece = freePiece(freeIndex, `${date}|${routineHash(routine)}`);
+      const title = piece.title || `自由 · ${routine.hobbies[freeIndex % routine.hobbies.length]}`;
+      placed.push({
+        start,
+        end: start + size,
+        title,
+        kind: piece.kind,
+        priority: 90,
+        auto: true,
+        note: '',
+      });
+      start += size;
+      freeIndex += 1;
+    }
+  }
+
+  if (sleepCap < MINUTES_PER_DAY) {
+    placed.push({ start: sleepCap, end: MINUTES_PER_DAY, title: '睡觉', kind: 'sleep', priority: 99, auto: true });
+  }
+
+  placed.sort((left, right) => left.start - right.start || left.end - right.end);
+
+  const items: PlanItem[] = placed.map((segment, index) => ({
+    id: `i${index + 1}`,
+    start: formatHHMM(segment.start),
+    end: formatHHMM(segment.end),
+    title: segment.title,
+    kind: segment.kind,
+    ...(segment.place ? { place: segment.place } : {}),
+    ...(segment.note ? { note: segment.note } : {}),
+    status: 'pending',
+    ...(segment.auto ? { auto: true } : {}),
+  }));
+
+  return {
+    version: 1,
+    date,
+    weekday,
+    tone: pick(TONES, hashSeed(`${date}|tone`)),
+    note: pick(NOTES, hashSeed(`${date}|note`)),
+    source: 'auto',
+    routineHash: routineHash(routine),
+    generatedAt: new Date().toISOString(),
+    edited: false,
+    items,
+    sleepAt,
+  };
+}
+
+/** 自动铺的自由段（连续 auto 项合并成一段空档），供模型润色时参考。 */
+export function autoGaps(plan: Plan): Gap[] {
+  const gaps: Gap[] = [];
+  let run: Gap | null = null;
+  for (const item of plan.items) {
+    const start = parseHHMM(item.start);
+    const end = parseHHMM(item.end);
+    if (start === null || end === null || !item.auto || item.kind === 'sleep') {
+      if (run) gaps.push(run);
+      run = null;
+      continue;
+    }
+    if (!run) run = { start, end };
+    else run.end = Math.max(run.end, end);
+  }
+  if (run) gaps.push(run);
+  return gaps;
+}
+
+export function planDayLabel(plan: Plan): string {
+  const parsed = parseDateKey(plan.date);
+  return `${parsed.getMonth() + 1}月${parsed.getDate()}日 ${weekdayLabel(plan.weekday)}`;
+}
+
+export function minuteRange(item: { start: string; end: string }): Gap | null {
+  const start = parseHHMM(item.start);
+  const end = parseHHMM(item.end);
+  return start === null || end === null || end <= start ? null : { start, end };
+}
+
+export function minutesText(minutes: number): string {
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`;
+}
