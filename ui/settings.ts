@@ -9,7 +9,7 @@ export type SettingsData = {
   fixedText: string;
   hobbiesText: string;
   models: Array<{ id: string; name: string; callable: boolean }>;
-  status: { lastError: string; lastTickAt: string };
+  status: { lastError: string; lastTickAt: string; reminderLastError?: string; reminderLastSentAt?: string };
   weather: { available: boolean; summary: string };
   today: string;
   version: string;
@@ -138,6 +138,25 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
   <p class="hint">${aiHint}</p>
 </section>
 
+<section class="card">
+  <h2>主动提醒 <span class="pill ${cfg.reminder.enabled ? 'warn' : ''}">${cfg.reminder.enabled ? '已开启' : '默认关闭'}</span></h2>
+  <div class="grid">
+    <label class="check wide"><input type="checkbox" name="reminderEnabled"${cfg.reminder.enabled ? ' checked' : ''}> 到关键节点主动发一条消息</label>
+    <label>渠道 ID（目前只支持 qq）<input type="text" name="reminderChannel" maxlength="40" value="${escapeHtml(cfg.reminder.channel)}" placeholder="qq"></label>
+    <label>账号（QQ 可空）<input type="text" name="reminderAccount" maxlength="40" value="${escapeHtml(cfg.reminder.account)}" placeholder="非 QQ 渠道才需要"></label>
+    <label>联系人 peer<input type="text" name="reminderPeer" maxlength="80" value="${escapeHtml(cfg.reminder.peer)}" placeholder="direct:你的QQ号"></label>
+    <label>提前分钟<input type="number" name="reminderLead" min="0" max="60" value="${cfg.reminder.leadMinutes}"></label>
+    <label>每天最多<input type="number" name="reminderMax" min="1" max="20" value="${cfg.reminder.maxPerDay}"></label>
+    <label>安静开始<input type="time" name="reminderQuietStart" value="${escapeHtml(cfg.reminder.quietStart)}"></label>
+    <label>安静结束<input type="time" name="reminderQuietEnd" value="${escapeHtml(cfg.reminder.quietEnd)}"></label>
+    <label class="check wide"><input type="checkbox" name="reminderUsePersona"${cfg.reminder.usePersona ? ' checked' : ''}> 用迟宝的语气生成，不只是一句模板</label>
+  </div>
+  <p class="hint">只提醒起床、正事、通勤、三餐、运动、固定安排和睡觉；自由空档不提醒。QQ 私聊的 peer 一般写 <code>direct:对方QQ号</code>，账号可留空（用当前登录的 QQ）；目标没填全时不会发送。</p>
+  ${status.reminderLastError ? `<div class="alert bad"><b>上次提醒失败</b><br>${escapeHtml(status.reminderLastError)}</div>` : ''}
+  ${status.reminderLastSentAt ? `<p class="hint">上次主动提醒：${escapeHtml(new Date(status.reminderLastSentAt).toLocaleString('zh-CN'))}</p>` : ''}
+  <div class="row" style="margin:10px 0 0"><button type="button" id="testReminder">发送测试提醒</button><span class="hint" style="margin:0">测试会立刻走一次当前渠道，不写日程提醒记录。</span></div>
+</section>
+
 <div class="row">
   <button class="primary" type="submit">保存设置</button>
   <span class="msg" id="msg" role="status"></span>
@@ -167,6 +186,9 @@ form.onsubmit=async(e)=>{
   try{
     const config={enabled:checked('enabled'),generateAt:val('generateAt'),daysAhead:num('daysAhead'),keepDays:num('keepDays'),
       ai:{enabled:checked('aiEnabled'),model:val('aiModel'),style:val('aiStyle')},
+      reminder:{enabled:checked('reminderEnabled'),channel:val('reminderChannel'),account:val('reminderAccount'),peer:val('reminderPeer'),
+        leadMinutes:num('reminderLead'),maxPerDay:num('reminderMax'),quietStart:val('reminderQuietStart'),quietEnd:val('reminderQuietEnd'),
+        usePersona:checked('reminderUsePersona')},
       routine:{wake:val('wake'),sleep:val('sleep'),wakeMinutes:num('wakeMinutes'),breakfastMinutes:num('breakfastMinutes'),
         commuteMinutes:num('commuteMinutes'),windDownMinutes:num('windDownMinutes'),
         work:{enabled:checked('workEnabled'),title:val('workTitle'),days:days('workDays'),start:val('workStart'),end:val('workEnd'),place:val('workPlace')},
@@ -194,6 +216,12 @@ document.getElementById('regen').onclick=async()=>{
   setMsg('正在重排…');
   try{const r=await post('generate',{date:today,force:true});setMsg('今天已重排：'+r.plan.items.length+' 项。')}
   catch(error){setMsg('重排失败：'+error.message,true)}
+};
+document.getElementById('testReminder').onclick=async()=>{
+  setMsg('正在发送测试提醒…');
+  try{const r=await post('reminder/test',{channel:val('reminderChannel'),account:val('reminderAccount'),peer:val('reminderPeer')});
+    setMsg(r.ok?'测试提醒已发出（'+r.status+'）。':'发送状态：'+r.status, !r.ok)}
+  catch(error){setMsg('没发出去：'+error.message,true)}
 };
 </script></body></html>`;
 }

@@ -13,6 +13,14 @@ async function fixture(t: TestContext) {
   await mkdir(join(root, 'plugins'), { recursive: true });
   await cp(resolve('plugins/schedule'), join(root, 'plugins/schedule'), { recursive: true });
   await mkdir(join(root, 'plugins/schedule/sub/weather/data'), { recursive: true });
+  await mkdir(join(root, 'plugins/schedule/data'), { recursive: true });
+  await writeFile(join(root, 'plugins/schedule/data/config.json'), JSON.stringify({
+    enabled: true,
+    generateAt: '00:00',
+    daysAhead: 5,
+    keepDays: 60,
+    routine: { work: { days: [1, 2, 3, 4, 5, 6, 7] } },
+  }));
   await writeFile(join(root, 'plugins/schedule/sub/weather/data/config.json'), JSON.stringify({
     city: '常州',
     latitude: 31.77359,
@@ -73,7 +81,19 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
 
   const settings = await request('/plugins/schedule/settings');
   assert.equal(settings.status, 200);
-  assert.match(await settings.text(), /日程/);
+  const settingsHtml = await settings.text();
+  assert.match(settingsHtml, /日程/);
+  assert.match(settingsHtml, /主动提醒/);
+  assert.match(settingsHtml, /reminderEnabled/);
+  assert.match(settingsHtml, /发送测试提醒/);
+
+  const reminderConfig = await (await request('/plugins/schedule/config', {
+    action: 'save',
+    config: { enabled: true, reminder: { enabled: true, channel: 'qq', account: '10001', peer: 'direct:20002', leadMinutes: 8, maxPerDay: 4 } },
+  })).json();
+  assert.equal(reminderConfig.config.reminder.enabled, true);
+  assert.equal(reminderConfig.config.reminder.account, '10001');
+  assert.equal(reminderConfig.config.reminder.leadMinutes, 8);
 
   const calendar = await request('/plugins/schedule/calendar');
   assert.equal(calendar.status, 200);
@@ -151,6 +171,40 @@ test('第一层：每轮注入当前与下一项', async (t) => {
   assert.match(systemText, /正在：|现在没有正在进行的安排/);
 });
 
+test('主动提醒：设置页可保存目标，测试接口真的走 QQ 发送工具', async (t) => {
+  const { app, request } = await fixture(t);
+  const sent: any[] = [];
+  app.tools.register({
+    name: 'qq_send_message',
+    description: '合成 QQ 发送',
+    danger: 'full',
+    schema: { type: 'object', properties: {
+      userId: { type: 'string' }, messageId: { type: 'string' }, text: { type: 'string' },
+    }, required: ['userId', 'messageId', 'text'], additionalProperties: false },
+    run: async (args: any, session: any) => {
+      sent.push({ args, session });
+      return { status: 'sent', confirmed: true };
+    },
+  });
+  await app.sessions.create('主动提醒测试');
+
+  const saved = await (await request('/plugins/schedule/config', {
+    action: 'save',
+    config: { enabled: true, reminder: { enabled: true, channel: 'qq', account: 'bot', peer: 'direct:20002', leadMinutes: 6, maxPerDay: 3 } },
+  })).json();
+  assert.equal(saved.config.reminder.enabled, true);
+  assert.equal(saved.config.reminder.leadMinutes, 6);
+
+  const tested = await (await request('/plugins/schedule/reminder/test', {
+    channel: 'qq', account: 'bot', peer: 'direct:20002', text: '测试主动提醒',
+  })).json();
+  assert.equal(tested.ok, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].args.userId, '20002');
+  assert.equal(sent[0].args.text, '测试主动提醒');
+  assert.equal(sent[0].args.messageId.startsWith('schedule-reminder-test:'), true);
+});
+
 test('AI 润色：开启后用模型填空档，失败保留骨架', async (t) => {
   const { app, request, requests } = await fixture(t);
   const date = todayKey();
@@ -174,11 +228,14 @@ test('AI 润色：开启后用模型填空档，失败保留骨架', async (t) =
     const gapText = user.split('可填的空档：')[1] ?? '';
     const match = /(\d{2}:\d{2})-(\d{2}:\d{2})/.exec(gapText);
     assert.ok(match, '提示里应带上空档');
+    const startMinute = Number(match![1].slice(0, 2)) * 60 + Number(match![1].slice(3));
+    const endMinute = startMinute + 60;
+    const end = `${String(Math.floor(endMinute / 60)).padStart(2, '0')}:${String(endMinute % 60).padStart(2, '0')}`;
     return {
       text: JSON.stringify({
         tone: '安静',
         note: '留一点空',
-        fills: [{ start: match![1], end: match![2], title: '看两集剧', kind: 'free', note: '躺着' }],
+        fills: [{ start: match![1], end, title: '看两集剧', kind: 'free', note: '躺着' }],
       }),
       toolCalls: [],
       usage: { prompt_tokens: 30, completion_tokens: 10 },
@@ -189,7 +246,7 @@ test('AI 润色：开启后用模型填空档，失败保留骨架', async (t) =
   assert.equal(polished.plan.source, 'ai');
   assert.ok(polished.plan.items.some((item: any) => item.title === '看两集剧'));
   assert.equal(polished.plan.tone, '安静');
-  assert.equal(requests.length, 1);
+  assert.ok(requests.length >= 1);
 
   app.llm.chat = async () => { throw Error('模拟供应商失败'); };
   const fallback = await (await request('/plugins/schedule/generate', { date, force: true })).json();

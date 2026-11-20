@@ -2,8 +2,8 @@
 
 按作息自动排出她每天的时间表：到点补生成、跨天自动接上，聊天里问「今天有什么安排」「现在在干嘛」时读的是同一份计划，不靠临场编；每一轮对话还会把「现在在做什么、下一项是什么」直接放进迟宝的上下文。
 
-- 版本：0.3.0
-- 依赖：`tools` / `web` / `llm` / `models`（都是内置服务）；`context` 是宿主新增的每轮上下文服务，旧宿主没有时自动跳过；天气是可选子插件
+- 版本：0.4.0
+- 依赖：`tools` / `web` / `llm` / `models`（都是内置服务）；`context` 是宿主新增的每轮上下文服务，旧宿主没有时自动跳过；天气是可选子插件；QQ 主动提醒需要 QQ 插件
 - 数据：只写本插件 `data/`，不上传；时间按本机时区
 
 ## 能做什么
@@ -17,14 +17,48 @@
 7. **天气子插件（可选）**：`sub/weather` 走 Open-Meteo，不需要 API key，提供实时天气 + 未来 7 天预报；日程页当天卡片显示天气条、周页签显示天气图标，设置页显示摘要，`schedule_today` / `schedule_now` 末尾追加一行天气。子插件独立配置、独立启停，停用后日程照常工作。
 8. **天气参与排程**：生成今天/未来几天时读取预报，雨雪、雷暴、高温会把运动和户外空档改成室内；周末天气好会留一段出门时间；因天气改过的计划会标记 `weatherAdjusted`，并在日程卡片和工具输出里说明。手动改过的计划仍然不会被覆盖。
 9. **第一层：每轮注入**：通过宿主的 `ctx.context.register()`，在迟宝每轮对话时注入当天计划里的「正在做什么、到几点、下一项、后面几项、天气调整」。不是靠模型临时想起调工具，也不需要每次调用 `schedule_now`；只在 `whale` / 「周小迟」人格生效，其他人格不受影响。注入失败、插件停用或旧宿主没有 `context` 服务时，聊天照常，不会卡住。
+10. **第二层：到点主动提醒**：起床、正事、通勤、三餐、运动、固定安排、睡觉前，按提前分钟主动发一条消息。目前只支持 QQ 渠道，走 QQ 插件的 `qq_send_message` 工具（需要 QQ 插件已装、QQ 配置为完全权限、当前有会话）。用迟宝的语气生成，失败回退模板；有安静时段、每天上限、迟到 5 分钟不补发、同一天同一项只发一次。控制台 Web 没有出站发送接口，所以提醒目标填 QQ 私聊。
 
 天气自己的工具：`weather_now`（现在 + 今天建议）、`weather_forecast`（未来 1–7 天）。
 
+## 插件商店
+
+「日程」已收录到 WhaleLife 插件商店的社区分类，审核版本 0.3.0。打开商店后，在「全部」或「社区」搜索「日程」或 `schedule` 都能找到。0.4.0 已在本仓库发布 Releases，尚未提交商店审核。
+
+- 本机商店入口：[http://127.0.0.1:9270/#market](http://127.0.0.1:9270/#market)
+- 公开市场目录：[WhaleLife 插件市场](https://github.com/iinukami/whalelife/blob/main/market/README.md)
+- 收录提交：[f8dc920](https://github.com/iinukami/whalelife/commit/f8dc9206872be383a24fd56ef6378ec7655e92df)
+
+商店条目已写明兼容范围：公开版 WhaleLife 支持生成和编辑日程，普通重新生成及停用后再启用都能保留手动修改；「每轮聊天自动带入当前日程」需要宿主额外提供上下文补丁，只装插件时可以正常使用基础日程功能。
+
 ## 安装与启用
 
-插件已经在 `whalelife/plugins/schedule/`，WhaleLife 启动时会自动扫描加载。
+有两种装法，先看自己要哪一层：
 
-- 0.3.0 的「每轮注入」需要宿主提供 `context` 服务；本目录配套的宿主补丁在 `core/context-feed.ts`、`core/plugin-api.ts`、`core/context.ts`、`core/plugin-worker.ts`、`core/runtime.ts`、`core/context-material.ts`、`core/session.ts`。只把插件目录复制到旧版 WhaleLife 时，日程、工具、页面都照常，只是不会自动注入上下文。
+### 只装插件（单插件包 0.4.0 / 商店 0.3.0）
+
+适合只想要「生成日程、看日程、手动改、天气、5 个日程工具」，以及 0.4.0 单插件包里的「第二层主动提醒」的人。
+
+1. 在插件商店搜索「日程」安装，会得到当前审核版本 0.3.0（只有基础日程）；要第二层主动提醒，用 0.4.0 单插件包，把 `schedule/` 复制到 `whalelife/plugins/schedule/`。
+2. 重启 WhaleLife。
+3. 控制台出现「日程」；日历、设置、天气、工具都能用。
+4. 不会自动把当前日程带进每轮聊天；问到日程时，模型仍可调用 `schedule_now` 等工具。
+5. 第二层主动提醒走 QQ 时，需要 QQ 插件已安装、QQ 配置为完全权限，并且当前有会话；不装 QQ 只影响主动提醒，日程本身照常。
+6. 不依赖宿主补丁，公开版 WhaleLife 可以直接用。
+
+### 完整包（插件 + 宿主上下文补丁）
+
+适合要「迟宝每轮自动知道当前在做什么」的人。
+
+1. 把完整包里的 `schedule/` 复制到 `whalelife/plugins/schedule/`。
+2. 把完整包里的 `core/` 8 个文件覆盖到 `whalelife/core/`（覆盖前先备份 `core/`）。
+3. 重启 WhaleLife。
+4. 迟宝每轮都会收到当天日程的「正在 / 下一项 / 后面几项 / 天气调整」；不再依赖模型临时调工具。
+
+覆盖 `core/` 前确认宿主版本一致；版本不同就按完整包里的 `PATCH.md` 手工合并，不要直接覆盖。
+
+### 共同步骤
+
 - 安装完成后**重启 WhaleLife**（或退出再打开），控制台「插件」列表出现「日程」；「日程 · 天气」收在父插件工作区的「子插件」页签里。
 - 设置页：控制台 →「日程」→「设置」（`/plugins/schedule/settings`，需要控制台登录）。
 - 天气设置：日程设置页的「打开天气设置」，或直接访问 `/plugins/schedule/weather/settings`。
@@ -43,6 +77,7 @@
 | 固定安排 | 多行文本 | 格式 `标题 \| 星期 \| 开始 \| 分钟 \| 地点`，星期写 `1-7`、`每天`、`工作日`、`周末` |
 | 爱好池 | 每行一个 | 空档按日期轮换，不会每天一模一样 |
 | AI 润色 | 开关、模型、额外要求 | 模型只从 WhaleLife 已有的对话模型里选；没选模型就只用规则骨架 |
+| 主动提醒 | 开关、渠道 ID、账号、联系人 peer、提前分钟、每天上限、安静时段、是否用迟宝语气 | 只提醒起床/正事/通勤/三餐/运动/固定/睡觉；QQ 私聊 peer 写 `direct:对方QQ号`，账号可空；目标没填全不发送 |
 | 天气（子插件） | 城市、经纬度、刷新间隔、预报天数、超时、接口地址 | 默认常州 `31.77359 / 119.95401`；建议用「按城市名定位」再保存 |
 
 模板：设置页可一键套用「上学（默认）」「上班」「自由职业」三套作息，只覆盖作息字段，不动 AI 和保留天数。
@@ -75,6 +110,7 @@
 - `POST /plugins/schedule/data`：`{from, days}` → 一周/多天计划 + 配置摘要 + 运行状态 + `weather` 快照
 - `POST /plugins/schedule/generate`：`{date?|dates?, force?}`
 - `POST /plugins/schedule/item`：`{date, action, id?, start?, end?, title?, note?, place?, kind?, status?}`
+- `POST /plugins/schedule/reminder/test`：`{channel?, account?, peer?, text?}` → 立刻发一条测试提醒，不写当天记录
 - `POST /plugins/schedule/weather/config`：`{action:"read"|"geocode"|"save", city?, config?}`
 - `POST /plugins/schedule/weather/data`：`{force?}` → 天气快照
 
@@ -82,6 +118,7 @@
 
 - `data/config.json`：设置。
 - `data/days/YYYY-MM-DD.json`：每天的计划；`keepDays` 之外自动清理。
+- `data/reminders/YYYY-MM-DD.json`：当天已发/失败的主动提醒记录，用来去重和限制每天条数。
 - `sub/weather/data/config.json`：天气配置（城市、经纬度、刷新间隔等）。
 - 全部在本机。只有开启 AI 润色时才会把「当天已有安排 + 空档 + 你的额外要求」发给所选模型；不发送聊天记录、记忆或人格文件。
 - 天气只把经纬度发给 Open-Meteo（`api.open-meteo.com` / `geocoding-api.open-meteo.com`），不发送日程、聊天或身份信息；不需要 API key。默认 30 分钟缓存，失败后约 60 秒内不重复请求。
@@ -92,10 +129,10 @@
 
 ```powershell
 cd D:\AI\whalelife
-.\runtime\node-v24.22.1-win-x64\node.exe --test plugins\schedule\test\plan.test.ts plugins\schedule\test\integration.test.ts plugins\schedule\test\weather.test.ts
+.\runtime\node-v24.22.1-win-x64\node.exe --test plugins\schedule\test\plan.test.ts plugins\schedule\test\integration.test.ts plugins\schedule\test\weather.test.ts plugins\schedule\test\reminder.test.ts
 ```
 
-集成测试覆盖：插件加载、两个页面入口、自动补生成、编辑落盘、停用/重载、5 个日程工具、AI 成功与失败回退、第一层上下文注入（`context.render` 与真实模型请求里的 system 文本）；天气另用本地假接口覆盖 WMO 映射、预报解析、缓存/强制刷新、城市定位、父页面天气条、`schedule_today` 天气行、天气规则改写、生成时写入天气、子插件停用与恢复。
+集成测试覆盖：插件加载、两个页面入口、自动补生成、编辑落盘、停用/重载、5 个日程工具、AI 成功与失败回退、第一层上下文注入（`context.render` 与真实模型请求里的 system 文本）、主动提醒设置项；提醒另用纯函数/假 QQ 工具覆盖提前窗口、安静时段、迟到不补、同项去重、失败重试和当天状态落盘。天气另用本地假接口覆盖 WMO 映射、预报解析、缓存/强制刷新、城市定位、父页面天气条、`schedule_today` 天气行、天气规则改写、生成时写入天气、子插件停用与恢复。
 
 天气与父插件通过宿主事件总线通信（`plugin:schedule:weather-request` / `plugin:schedule/weather:snapshot`），因为父进程读不到子插件的本地 `provide` 服务；子插件停用后请求超时，父插件自动降级。
 
@@ -105,7 +142,7 @@ cd D:\AI\whalelife
 
 ## 手动安装
 
-1. 下载本仓库（`git clone` 或 Code → Download ZIP）。
+1. 下载本仓库（`git clone` 或 Code → Download ZIP），或使用本仓库 Releases 里的 0.4.0 安装包。
 2. 把仓库内容放进 WhaleLife 本体的 `plugins/schedule/` 目录；**目录名必须是 `schedule`**（manifest 要求 id 与目录同名）。
 3. 重启本体，或到控制台「插件管理」里重载该插件。
 4. 在「插件管理」确认状态为「运行中」；首次使用请打开插件设置页完成必要配置。

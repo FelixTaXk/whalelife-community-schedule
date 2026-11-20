@@ -57,6 +57,19 @@ export type Routine = {
 
 export type AiConfig = { enabled: boolean; model: string; style: string };
 
+export type ReminderConfig = {
+  enabled: boolean;
+  channel: string;
+  account: string;
+  peer: string;
+  persona: string;
+  leadMinutes: number;
+  maxPerDay: number;
+  quietStart: string;
+  quietEnd: string;
+  usePersona: boolean;
+};
+
 export type Config = {
   version: number;
   enabled: boolean;
@@ -64,6 +77,7 @@ export type Config = {
   daysAhead: number;
   keepDays: number;
   ai: AiConfig;
+  reminder: ReminderConfig;
   routine: Routine;
 };
 
@@ -176,6 +190,18 @@ export function defaultConfig(): Config {
     daysAhead: 2,
     keepDays: 60,
     ai: { enabled: false, model: '', style: '' },
+    reminder: {
+      enabled: false,
+      channel: 'qq',
+      account: '',
+      peer: '',
+      persona: 'whale',
+      leadMinutes: 10,
+      maxPerDay: 6,
+      quietStart: '23:30',
+      quietEnd: '06:30',
+      usePersona: true,
+    },
     routine: cloneRoutine(STUDENT_ROUTINE),
   };
 }
@@ -302,6 +328,7 @@ export function normalizeRoutine(value: unknown): Routine {
 export function normalizeConfig(value: unknown, fallback: Config = defaultConfig()): Config {
   const raw = value && typeof value === 'object' ? (value as Record<string, any>) : {};
   const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
+  const reminder = raw.reminder && typeof raw.reminder === 'object' ? raw.reminder : {};
   return {
     version: 1,
     enabled: bool(raw.enabled, fallback.enabled),
@@ -312,6 +339,18 @@ export function normalizeConfig(value: unknown, fallback: Config = defaultConfig
       enabled: bool(ai.enabled, false),
       model: text(ai.model, 80),
       style: text(ai.style, 300),
+    },
+    reminder: {
+      enabled: bool(reminder.enabled, false),
+      channel: text(reminder.channel, 40) || fallback.reminder.channel,
+      account: text(reminder.account, 40),
+      peer: text(reminder.peer, 80),
+      persona: text(reminder.persona, 40) || fallback.reminder.persona,
+      leadMinutes: integer(reminder.leadMinutes, fallback.reminder.leadMinutes, 0, 60),
+      maxPerDay: integer(reminder.maxPerDay, fallback.reminder.maxPerDay, 1, 20),
+      quietStart: time(reminder.quietStart, fallback.reminder.quietStart),
+      quietEnd: time(reminder.quietEnd, fallback.reminder.quietEnd),
+      usePersona: bool(reminder.usePersona, fallback.reminder.usePersona),
     },
     routine: raw.routine === undefined ? cloneRoutine(fallback.routine) : normalizeRoutine(raw.routine),
   };

@@ -2,6 +2,7 @@
 
 import type { Context, PluginHandler } from '../../../core/context.ts';
 import type { ScheduleService } from './service.ts';
+import type { ReminderService } from './reminder.ts';
 import type { WeatherBridge } from './weather-bridge.ts';
 import { settingsPage, type SettingsData } from '../ui/settings.ts';
 import { calendarPage } from '../ui/calendar.ts';
@@ -49,7 +50,7 @@ function parseHobbies(value: unknown): string[] | undefined {
 
 export type WebOptions = { version: string };
 
-export function registerWeb(ctx: Context, service: ScheduleService, weather: WeatherBridge, options: WebOptions) {
+export function registerWeb(ctx: Context, service: ScheduleService, weather: WeatherBridge, reminder: ReminderService, options: WebOptions) {
   const base = '/plugins/schedule/';
 
   async function snapshot(): Promise<SettingsData> {
@@ -65,7 +66,12 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
       fixedText: formatFixedText(service.config.routine.fixed),
       hobbiesText: service.config.routine.hobbies.join('\n'),
       models,
-      status: { lastError: service.status().lastError, lastTickAt: service.status().lastTickAt },
+      status: {
+        lastError: service.status().lastError,
+        lastTickAt: service.status().lastTickAt,
+        reminderLastError: reminder.lastError,
+        reminderLastSentAt: reminder.lastSentAt,
+      },
       weather: { available: weather.available, summary: weatherSummary },
       today: dateKey(new Date()),
       version: options.version,
@@ -107,8 +113,10 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         const raw = body?.config && typeof body.config === 'object' ? { ...body.config } : {};
         const { items, errors } = parseFixedText(body?.fixedText);
         const hobbies = parseHobbies(body?.hobbiesText);
-        const routine = { ...(raw.routine && typeof raw.routine === 'object' ? raw.routine : {}) };
-        routine.fixed = items;
+        const routine = {
+          ...(raw.routine && typeof raw.routine === 'object' ? raw.routine : cloneRoutine(service.config.routine)),
+        };
+        if (typeof body?.fixedText === 'string') routine.fixed = items;
         if (hobbies !== undefined) routine.hobbies = hobbies;
         const config = await service.saveConfig({ ...raw, routine });
         void service.refreshAfterConfig();
@@ -188,6 +196,23 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         plans,
         errors,
       });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: errorText(error) });
+    }
+  });
+
+  ctx.web.api(base + 'reminder/test', async (req: any, res: any, { signal }: { signal: AbortSignal }) => {
+    try {
+      const body = await readJson(req, signal);
+      const result = await reminder.sendTest(
+        typeof body?.text === 'string' ? body.text : '',
+        {
+          channel: typeof body?.channel === 'string' ? body.channel : undefined,
+          account: typeof body?.account === 'string' ? body.account : undefined,
+          peer: typeof body?.peer === 'string' ? body.peer : undefined,
+        },
+      );
+      sendJson(res, 200, { ok: result.status === 'sent' || result.status === 'uncertain', ...result });
     } catch (error) {
       sendJson(res, 400, { ok: false, error: errorText(error) });
     }

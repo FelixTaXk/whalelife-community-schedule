@@ -1,7 +1,7 @@
 id: schedule
 name: 日程
-version: 0.3.0
-description: 按作息自动生成每天的日程：定点生成、跨天补生成、可按已配置模型润色空档；天气子插件提供实时天气与预报；每轮把当前/下一项注入迟宝的对话上下文。
+version: 0.4.0
+description: 按作息自动生成每天的日程：定点生成、跨天补生成、可按已配置模型润色空档；天气子插件提供实时天气与预报；每轮把当前/下一项注入迟宝的对话上下文；关键节点可通过 QQ 主动提醒。
 apiVersion: "1.0.0"
 depends: [tools, web, llm, models]
 sub: [weather]
