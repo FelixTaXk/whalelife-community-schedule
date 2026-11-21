@@ -126,6 +126,53 @@ test('周末也要上班时，正事优先于旅行；假期不上班时保留�
   assert.ok(holiday.items.some((item) => item.kind === 'travel'));
 });
 
+test('旅行候选按可用天数过滤：一日游不会选三天目的地，排不下就跳过', () => {
+  const config = configWithTravel();
+  config.travel.spots = [
+    { name: '需连续三天', distance: 'near', minDays: 3, maxDays: 4, from: '', to: '', note: '至少三天' },
+  ];
+  const saturday = resolveDayInfo(config.holiday, '2026-11-28', 6);
+  assert.equal(resolveTravel(config.travel, saturday, '2026-11-28'), null, '一日游不选最少三天的地点');
+  assert.equal(resolveTravel(config.travel, saturday, '2026-11-28', { destination: '需连续三天', days: 1 }), null,
+    '缓存或手工指定的地点也要重新校验天数');
+
+  const plan = generatePlan(config, '2026-11-28');
+  assert.equal(plan.travel, undefined);
+  assert.equal(plan.items.some((item) => item.kind === 'travel'), false);
+
+  config.travel.spots.push(
+    { name: '常州恐龙园', distance: 'near', minDays: 1, maxDays: 1, from: '', to: '', note: '周六一日游' },
+  );
+  assert.equal(resolveTravel(config.travel, saturday, '2026-11-28')?.destination, '常州恐龙园');
+});
+
+test('旅行日跳过常规运动，普通非旅行日保留运动', () => {
+  const config = configWithTravel();
+  config.routine.exercise = { enabled: true, title: '散步', days: [4, 6, 7], start: '19:30', minutes: 40 };
+  config.routine.hobbies = ['看剧'];
+
+  const weekend = generatePlan(config, '2026-11-28');
+  assert.ok(weekend.items.some((item) => item.kind === 'travel'));
+  assert.equal(weekend.items.some((item) => item.kind === 'exercise'), false, '周末旅行日不排常规运动');
+
+  const shortLastDay = generatePlan(config, '2026-04-05');
+  assert.ok(shortLastDay.items.some((item) => item.kind === 'travel'), '清明短假最后一天仍有旅行');
+  assert.equal(shortLastDay.items.some((item) => item.kind === 'exercise'), false, '短假旅行日不排常规运动');
+
+  config.travel.spots = [
+    { name: '杭州', distance: 'far', minDays: 3, maxDays: 6, from: '', to: '', note: '西湖' },
+  ];
+  const longLastDay = generatePlan(config, '2027-10-07');
+  assert.ok(longLastDay.items.some((item) => item.kind === 'travel'), '国庆最后一天仍有旅行');
+  assert.equal(longLastDay.items.some((item) => item.kind === 'exercise'), false, '长假旅行日不排常规运动');
+
+  config.travel.enabled = false;
+  const ordinary = generatePlan(config, '2026-11-28');
+  assert.equal(ordinary.travel, undefined);
+  assert.ok(ordinary.items.some((item) => item.kind === 'exercise' && item.start === '19:30'),
+    '非旅行日仍保留散步');
+});
+
 test('AI 旅行选择：只接受地点池里的地点和天数范围内', () => {
   const spots = [
     { name: '杭州', distance: 'far' as const, minDays: 3, maxDays: 5, from: '', to: '', note: '西湖' },

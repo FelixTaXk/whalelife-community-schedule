@@ -78,15 +78,19 @@ function targetSpot(config: TravelConfig, info: DayInfo, mode: TravelMode): Trav
   };
 }
 
-/** 给 AI 的候选地点：长假优先远途，周末/短假优先近处。 */
+/** 给 AI 的候选地点：长假优先远途，周末/短假优先近处；只保留按可用天数确实排得下的地点。 */
 export function travelCandidates(config: TravelConfig, info: DayInfo, date = info.date): TravelSpot[] {
   if (!config.enabled || info.workday || !info.holiday && !info.weekend) return [];
-  const target = targetSpot(config, info, modeOf(info, config) ?? 'short');
-  if (target) return [target];
   const mode = modeOf(info, config);
   if (!mode) return [];
+  const target = targetSpot(config, info, mode);
+  if (target) return [target];
   const wanted = mode === 'long' ? 'far' : 'near';
-  const all = config.spots.filter((spot) => !spot.from || inRange(date, spot.from, spot.to));
+  const all = config.spots.filter((spot) => {
+    if (spot.from && !inRange(date, spot.from, spot.to)) return false;
+    const range = tripWindow(info, mode, spot, info.holiday);
+    return !!range && dayDiff(range.start, range.end) + 1 >= spot.minDays;
+  });
   const preferred = all.filter((spot) => spot.distance === wanted);
   return preferred.length ? preferred : all;
 }
@@ -139,15 +143,8 @@ export function resolveTravel(
   if (target) candidates = [target];
   let spot = target;
   if (override?.destination) {
-    spot = candidates.find((entry) => entry.name === override.destination) ?? {
-      name: override.destination,
-      distance: mode === 'long' ? 'far' : 'near',
-      minDays: 1,
-      maxDays: mode === 'weekend' ? 1 : mode === 'short' ? 2 : 6,
-      from: '',
-      to: '',
-      note: override.reason ?? 'AI 选择',
-    };
+    spot = candidates.find((entry) => entry.name === override.destination) ?? null;
+    if (!spot) return null;
     candidates = [spot];
   }
   if (!spot) spot = pickSpot(candidates, key);

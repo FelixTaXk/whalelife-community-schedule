@@ -193,6 +193,13 @@ export function generatePlan(config: Config, date: string, travelOverride?: Trav
     addSegment(placed, segment);
   }
 
+  // 旅行日不再排常规运动：只有旅行块真的留下时才移除，被上班/正事挤掉的旅行日仍保留运动。
+  if (placed.some((segment) => segment.kind === 'travel')) {
+    for (let index = placed.length - 1; index >= 0; index -= 1) {
+      if (placed[index].kind === 'exercise') placed.splice(index, 1);
+    }
+  }
+
   const sorted = [...placed].sort((left, right) => left.start - right.start);
   const gaps: Gap[] = [];
   let cursor = wake;
