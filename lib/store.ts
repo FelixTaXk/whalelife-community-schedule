@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { Context } from '../../../core/context.ts';
 import type { Plan } from './types.ts';
 import { isPlan } from './types.ts';
+import type { TravelChoice } from './travel.ts';
 import { addDays } from './time.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -62,5 +63,33 @@ export class Store {
       removed += 1;
     }
     return removed;
+  }
+
+  /** AI 选过的目的地按假期缓存；同一假期多天生成时不会每天换地方。 */
+  async readTravelChoice(key: string): Promise<TravelChoice | null> {
+    const raw = await this.ctx.config.read<unknown>('travel.json').catch(() => null);
+    if (!raw || typeof raw !== 'object') return null;
+    const value = (raw as Record<string, any>).choices?.[key];
+    if (!value || typeof value !== 'object') return null;
+    const destination = typeof value.destination === 'string' ? value.destination.trim().slice(0, 24) : '';
+    const days = Number(value.days);
+    const source = value.source === 'ai' || value.source === 'user' || value.source === 'pool' ? value.source : 'ai';
+    if (!destination || !Number.isInteger(days) || days < 1 || days > 15) return null;
+    return {
+      key,
+      destination,
+      days,
+      source,
+      reason: typeof value.reason === 'string' ? value.reason.slice(0, 80) : '',
+    };
+  }
+
+  async writeTravelChoice(choice: TravelChoice): Promise<void> {
+    const raw = await this.ctx.config.read<unknown>('travel.json').catch(() => null);
+    const old = raw && typeof raw === 'object' ? (raw as Record<string, any>).choices ?? {} : {};
+    await this.ctx.config.save('travel.json', {
+      version: 1,
+      choices: { ...old, [choice.key]: choice },
+    });
   }
 }

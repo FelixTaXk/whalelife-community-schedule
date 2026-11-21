@@ -6,7 +6,18 @@ import type { ReminderService } from './reminder.ts';
 import type { WeatherBridge } from './weather-bridge.ts';
 import { settingsPage, type SettingsData } from '../ui/settings.ts';
 import { calendarPage } from '../ui/calendar.ts';
-import { formatFixedText, parseFixedText, PRESETS, cloneRoutine } from './types.ts';
+import {
+  cloneRoutine,
+  formatFixedText,
+  formatHolidayText,
+  formatTravelText,
+  formatWorkdaysText,
+  parseFixedText,
+  parseHolidayText,
+  parseTravelText,
+  parseWorkdaysText,
+  PRESETS,
+} from './types.ts';
 import { dateKey, isValidDateKey } from './time.ts';
 
 function sendJson(res: any, code: number, body: unknown) {
@@ -65,6 +76,9 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
       config: service.config,
       fixedText: formatFixedText(service.config.routine.fixed),
       hobbiesText: service.config.routine.hobbies.join('\n'),
+      holidayText: formatHolidayText(service.config.holiday.periods),
+      holidayWorkdays: formatWorkdaysText(service.config.holiday.workdays),
+      travelText: formatTravelText(service.config.travel.spots),
       models,
       status: {
         lastError: service.status().lastError,
@@ -113,19 +127,46 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         const raw = body?.config && typeof body.config === 'object' ? { ...body.config } : {};
         const { items, errors } = parseFixedText(body?.fixedText);
         const hobbies = parseHobbies(body?.hobbiesText);
+        const warnings = [...errors];
         const routine = {
           ...(raw.routine && typeof raw.routine === 'object' ? raw.routine : cloneRoutine(service.config.routine)),
         };
         if (typeof body?.fixedText === 'string') routine.fixed = items;
         if (hobbies !== undefined) routine.hobbies = hobbies;
-        const config = await service.saveConfig({ ...raw, routine });
+        const holiday = {
+          ...service.config.holiday,
+          ...(raw.holiday && typeof raw.holiday === 'object' ? raw.holiday : {}),
+        };
+        if (typeof body?.holidayText === 'string') {
+          const parsed = parseHolidayText(body.holidayText);
+          holiday.periods = parsed.periods;
+          warnings.push(...parsed.errors);
+        }
+        if (typeof body?.holidayWorkdays === 'string') {
+          const parsed = parseWorkdaysText(body.holidayWorkdays);
+          holiday.workdays = parsed.workdays;
+          warnings.push(...parsed.errors);
+        }
+        const travel = {
+          ...service.config.travel,
+          ...(raw.travel && typeof raw.travel === 'object' ? raw.travel : {}),
+        };
+        if (typeof body?.travelText === 'string') {
+          const parsed = parseTravelText(body.travelText);
+          travel.spots = parsed.spots;
+          warnings.push(...parsed.errors);
+        }
+        const config = await service.saveConfig({ ...raw, routine, holiday, travel });
         void service.refreshAfterConfig();
         sendJson(res, 200, {
           ok: true,
           config,
           fixedText: formatFixedText(config.routine.fixed),
           hobbiesText: config.routine.hobbies.join('\n'),
-          warnings: errors,
+          holidayText: formatHolidayText(config.holiday.periods),
+          holidayWorkdays: formatWorkdaysText(config.holiday.workdays),
+          travelText: formatTravelText(config.travel.spots),
+          warnings,
         });
         return;
       }

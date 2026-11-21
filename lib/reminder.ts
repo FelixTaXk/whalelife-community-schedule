@@ -5,7 +5,7 @@ import type { ReminderConfig, Plan, PlanItem } from './types.ts';
 import type { ScheduleService } from './service.ts';
 import { dateKey, minuteOfDay, parseHHMM } from './time.ts';
 
-export const REMINDER_KINDS = ['routine', 'work', 'study', 'commute', 'meal', 'exercise', 'fixed', 'sleep'] as const;
+export const REMINDER_KINDS = ['routine', 'work', 'study', 'commute', 'meal', 'exercise', 'fixed', 'travel', 'sleep'] as const;
 const REMINDER_KINDS_SET = new Set<string>(REMINDER_KINDS);
 const LATE_GRACE_MINUTES = 5;
 

@@ -57,8 +57,8 @@ export function calendarPage(data: CalendarData): string {
 <script>
 var API='/plugins/schedule/';
 var state={today:${JSON.stringify(data.today)},weekStart:${JSON.stringify(initialWeek)},selected:${JSON.stringify(data.today)},plans:{},editing:null,config:null,status:null,weather:null,busy:false};
-var COLORS={routine:'#8fa5a3',meal:'#d78b4a',commute:'#5b8bb8',work:'#17906f',study:'#2f8f8f',exercise:'#c25b5b',free:'#7a6fbf',chore:'#9a7d55',rest:'#6f8f9a',social:'#b0709a',fixed:'#b39431',sleep:'#3f4f55'};
-var KIND={routine:'日常',meal:'用餐',commute:'路上',work:'正事',study:'学习',exercise:'运动',free:'自由',chore:'家务',rest:'休息',social:'社交',fixed:'固定',sleep:'睡觉'};
+var COLORS={routine:'#8fa5a3',meal:'#d78b4a',commute:'#5b8bb8',work:'#17906f',study:'#2f8f8f',exercise:'#c25b5b',free:'#7a6fbf',chore:'#9a7d55',rest:'#6f8f9a',social:'#b0709a',fixed:'#b39431',travel:'#c07a3e',sleep:'#3f4f55'};
+var KIND={routine:'日常',meal:'用餐',commute:'路上',work:'正事',study:'学习',exercise:'运动',free:'自由',chore:'家务',rest:'休息',social:'社交',fixed:'固定',travel:'旅行',sleep:'睡觉'};
 var WEEK=['一','二','三','四','五','六','日'];
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function pad(n){return String(n).padStart(2,'0')}
@@ -140,6 +140,9 @@ function renderDay(){
   }
   var srcLabel=plan.source==='ai'?'模型润色':(plan.source==='manual'?'手动':'自动');
   var head='<h2>'+esc(dayTitle(key))+' <span class="pill">'+esc(plan.tone)+'</span><span class="pill">'+srcLabel+'</span>'+(plan.edited?'<span class="pill warn">改过</span>':'')+(plan.date===state.today?'<span class="pill good">今天</span>':'')+'</h2>';
+  if(plan.holiday)head+='<div class="row" style="margin:-6px 0 0"><span class="pill good">'+esc(plan.holiday.name)+' · 第 '+(plan.holiday.dayIndex+1)+'/'+plan.holiday.days+' 天</span>'+(plan.travel?'<span class="pill">旅行 · '+esc(plan.travel.destination)+'</span>':'')+'</div>';
+  else if(plan.workday)head+='<div class="row" style="margin:-6px 0 0"><span class="pill warn">'+esc(plan.workday)+'</span></div>';
+  else if(plan.travel)head+='<div class="row" style="margin:-6px 0 0"><span class="pill">周末短途 · '+esc(plan.travel.destination)+'</span></div>';
   if(plan.note)head+='<p class="muted" style="margin:-6px 0 0">'+esc(plan.note)+'</p>';
   head+=weatherBar(key,plan);
   if(plan.weatherAdjusted&&plan.weatherAdjusted.length)head+='<div class="wxnote">按天气调整：'+esc(plan.weatherAdjusted.join('；'))+'</div>';

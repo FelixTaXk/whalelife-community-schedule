@@ -116,7 +116,7 @@ export function applyWeatherRules(plan: Plan, day: WeatherDay | null | undefined
   if (day.max <= 3) add('很冷，出门穿厚一点');
 
   const weekend = plan.weekday >= 6;
-  if (weekend && isNiceDay(day)) {
+  if (weekend && !plan.travel && isNiceDay(day)) {
     const existing = items.find((item) => item.title.includes('出去走走') || (item.note ?? '').includes('天气好'));
     if (existing) {
       if (!(existing.note ?? '').includes('天气好')) existing.note = appendNote(existing.note, '天气好，出去走走');

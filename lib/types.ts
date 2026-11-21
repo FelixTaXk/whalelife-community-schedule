@@ -1,15 +1,15 @@
 /*! 日程 plugin · 配置数据结构、默认作息与校验。 */
 
 import type { WeatherDay } from './weather-types.ts';
-import { clamp, formatHHMM, isTime, parseHHMM } from './time.ts';
+import { clamp, formatHHMM, isTime, isValidDateKey, parseHHMM } from './time.ts';
 
 export type BlockKind =
   | 'routine' | 'meal' | 'commute' | 'work' | 'study'
-  | 'exercise' | 'free' | 'chore' | 'rest' | 'social' | 'fixed' | 'sleep';
+  | 'exercise' | 'free' | 'chore' | 'rest' | 'social' | 'fixed' | 'travel' | 'sleep';
 
 export const BLOCK_KINDS: readonly BlockKind[] = [
   'routine', 'meal', 'commute', 'work', 'study',
-  'exercise', 'free', 'chore', 'rest', 'social', 'fixed', 'sleep',
+  'exercise', 'free', 'chore', 'rest', 'social', 'fixed', 'travel', 'sleep',
 ];
 
 export const KIND_LABEL: Record<BlockKind, string> = {
@@ -24,6 +24,7 @@ export const KIND_LABEL: Record<BlockKind, string> = {
   rest: '休息',
   social: '社交',
   fixed: '固定',
+  travel: '旅行',
   sleep: '睡觉',
 };
 
@@ -70,6 +71,59 @@ export type ReminderConfig = {
   usePersona: boolean;
 };
 
+export type HolidayKind = 'statutory' | 'student' | 'custom';
+export type HolidayScale = 'short' | 'long';
+
+export type HolidayPeriod = {
+  name: string;
+  start: string;
+  end: string;
+  kind: HolidayKind;
+  scale: HolidayScale;
+};
+
+export type HolidayConfig = {
+  enabled: boolean;
+  /** 内置 2026–2027 国务院法定节假日和调休上班日。 */
+  builtin: boolean;
+  /** 只有打开后，kind=student 的自定义假期才生效。 */
+  student: boolean;
+  periods: HolidayPeriod[];
+  /** 额外的调休上班日，YYYY-MM-DD。 */
+  workdays: string[];
+};
+
+export type TravelDistance = 'near' | 'far';
+export type TravelSource = 'user' | 'ai' | 'pool';
+
+export type TravelSpot = {
+  name: string;
+  distance: TravelDistance;
+  minDays: number;
+  maxDays: number;
+  /** 指定日期段，格式 YYYY-MM-DD~YYYY-MM-DD；空表示不限。 */
+  from: string;
+  to: string;
+  note: string;
+};
+
+export type TravelConfig = {
+  enabled: boolean;
+  weekend: boolean;
+  shortHoliday: boolean;
+  longHoliday: boolean;
+  /** 1 = 每个周末，2 = 隔一个周末，最多 4。 */
+  weekendEvery: number;
+  /** 有可用模型时，让 AI 从地点池里挑；失败回退规则。 */
+  aiChoose: boolean;
+  /** 指定目的地；有值时优先于地点池和 AI。 */
+  target: string;
+  targetFrom: string;
+  targetTo: string;
+  style: string;
+  spots: TravelSpot[];
+};
+
 export type Config = {
   version: number;
   enabled: boolean;
@@ -78,6 +132,8 @@ export type Config = {
   keepDays: number;
   ai: AiConfig;
   reminder: ReminderConfig;
+  holiday: HolidayConfig;
+  travel: TravelConfig;
   routine: Routine;
 };
 
@@ -104,6 +160,8 @@ export type Plan = {
   note: string;
   source: 'auto' | 'ai' | 'manual';
   routineHash: string;
+  /** 节假日、旅行等非作息配置的哈希，用来判断旧计划是否需要重排。 */
+  configHash?: string;
   generatedAt: string;
   edited: boolean;
   items: PlanItem[];
@@ -116,6 +174,23 @@ export type Plan = {
   weatherKey?: string;
   /** 因天气做过的调整，展示在日程卡片和工具输出里。 */
   weatherAdjusted?: string[];
+  /** 当天命中的法定/自定义假期；调休上班日会单独记在 workday。 */
+  holiday?: {
+    name: string;
+    kind: HolidayKind;
+    scale: HolidayScale;
+    dayIndex: number;
+    days: number;
+  };
+  /** 调休上班日名称；有值时即便周末也按工作日排正事。 */
+  workday?: string;
+  /** 当天的旅行安排（短途或长假中的某一天）。 */
+  travel?: {
+    destination: string;
+    dayIndex: number;
+    days: number;
+    source: TravelSource;
+  };
 };
 
 export const TONES = ['安静', '平稳', '轻快', '有点困', '挺专注', '松松散散', '还不错'] as const;
@@ -202,6 +277,20 @@ export function defaultConfig(): Config {
       quietEnd: '06:30',
       usePersona: true,
     },
+    holiday: { enabled: true, builtin: true, student: false, periods: [], workdays: [] },
+    travel: {
+      enabled: false,
+      weekend: true,
+      shortHoliday: true,
+      longHoliday: true,
+      weekendEvery: 1,
+      aiChoose: false,
+      target: '',
+      targetFrom: '',
+      targetTo: '',
+      style: '',
+      spots: [],
+    },
     routine: cloneRoutine(STUDENT_ROUTINE),
   };
 }
@@ -280,6 +369,89 @@ function normalizeHobbies(value: unknown, fallback: string[]): string[] {
   return items.length ? items : [...fallback];
 }
 
+function dateValue(value: unknown): string {
+  return typeof value === 'string' && isValidDateKey(value.trim()) ? value.trim() : '';
+}
+
+function normalizeHolidayPeriods(value: unknown): HolidayPeriod[] {
+  if (!Array.isArray(value)) return [];
+  const items: HolidayPeriod[] = [];
+  for (const entry of value.slice(0, 30)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const source = entry as Record<string, unknown>;
+    const name = text(source.name, 24);
+    const start = dateValue(source.start);
+    const end = dateValue(source.end);
+    if (!name || !start || !end || end < start) continue;
+    const kind: HolidayKind = source.kind === 'student' || source.kind === 'statutory' ? source.kind : 'custom';
+    const scale: HolidayScale = source.scale === 'short' ? 'short' : 'long';
+    items.push({ name, start, end, kind, scale });
+  }
+  return items;
+}
+
+function normalizeWorkdays(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.slice(0, 40).map(dateValue).filter(Boolean))].sort();
+}
+
+function normalizeHolidayConfig(value: unknown, fallback: HolidayConfig): HolidayConfig {
+  if (!value || typeof value !== 'object') {
+    return { ...fallback, periods: [...fallback.periods], workdays: [...fallback.workdays] };
+  }
+  const raw = value as Record<string, any>;
+  return {
+    enabled: bool(raw.enabled, fallback.enabled),
+    builtin: bool(raw.builtin, fallback.builtin),
+    student: bool(raw.student, fallback.student),
+    periods: normalizeHolidayPeriods(raw.periods),
+    workdays: normalizeWorkdays(raw.workdays),
+  };
+}
+
+function normalizeTravelSpots(value: unknown): TravelSpot[] {
+  if (!Array.isArray(value)) return [];
+  const items: TravelSpot[] = [];
+  const seen = new Set<string>();
+  for (const entry of value.slice(0, 20)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const source = entry as Record<string, any>;
+    const name = text(source.name, 24);
+    if (!name || seen.has(name)) continue;
+    const distance: TravelDistance = source.distance === 'far' ? 'far' : 'near';
+    const minDays = integer(source.minDays, 1, 1, 15);
+    const maxDays = integer(source.maxDays, Math.max(minDays, 3), minDays, 15);
+    const from = dateValue(source.from);
+    const to = dateValue(source.to);
+    if ((from && !to) || (!from && to) || (from && to && to < from)) continue;
+    seen.add(name);
+    items.push({ name, distance, minDays, maxDays, from, to, note: text(source.note, 40) });
+  }
+  return items;
+}
+
+function normalizeTravelConfig(value: unknown, fallback: TravelConfig): TravelConfig {
+  if (!value || typeof value !== 'object') {
+    return { ...fallback, spots: [...fallback.spots] };
+  }
+  const raw = value as Record<string, any>;
+  const targetFrom = dateValue(raw.targetFrom);
+  const targetTo = dateValue(raw.targetTo);
+  return {
+    enabled: bool(raw.enabled, fallback.enabled),
+    weekend: bool(raw.weekend, fallback.weekend),
+    shortHoliday: bool(raw.shortHoliday, fallback.shortHoliday),
+    longHoliday: bool(raw.longHoliday, fallback.longHoliday),
+    weekendEvery: integer(raw.weekendEvery, fallback.weekendEvery, 1, 4),
+    aiChoose: bool(raw.aiChoose, fallback.aiChoose),
+    target: text(raw.target, 24),
+    targetFrom: targetFrom && targetTo && targetTo < targetFrom ? '' : targetFrom,
+    targetTo: targetFrom && targetTo && targetTo < targetFrom ? '' : targetTo,
+    style: text(raw.style, 300),
+    spots: normalizeTravelSpots(raw.spots),
+  };
+}
+
 export function normalizeRoutine(value: unknown): Routine {
   const base = cloneRoutine(STUDENT_ROUTINE);
   if (!value || typeof value !== 'object') return base;
@@ -352,6 +524,8 @@ export function normalizeConfig(value: unknown, fallback: Config = defaultConfig
       quietEnd: time(reminder.quietEnd, fallback.reminder.quietEnd),
       usePersona: bool(reminder.usePersona, fallback.reminder.usePersona),
     },
+    holiday: normalizeHolidayConfig(raw.holiday, fallback.holiday),
+    travel: normalizeTravelConfig(raw.travel, fallback.travel),
     routine: raw.routine === undefined ? cloneRoutine(fallback.routine) : normalizeRoutine(raw.routine),
   };
 }
@@ -400,8 +574,124 @@ export function parseFixedText(value: unknown): { items: FixedItem[]; errors: st
   return { items, errors };
 }
 
-function parseDaysText(value: string): number[] {
-  const compact = value.replace(/\s+/g, '');
+/** 自定义假期文本框：每行「名称 | 开始 | 结束 | 短假/长假/寒暑假」。 */
+export function parseHolidayText(value: unknown): { periods: HolidayPeriod[]; errors: string[] } {
+  if (typeof value !== 'string') return { periods: [], errors: [] };
+  const periods: HolidayPeriod[] = [];
+  const errors: string[] = [];
+  for (const rawLine of value.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (periods.length >= 30) {
+      errors.push('自定义假期最多 30 条，后面的没有保存');
+      break;
+    }
+    const parts = line.split(/\||｜/).map((part) => part.trim());
+    const name = (parts[0] ?? '').slice(0, 24);
+    const start = dateValue(parts[1]);
+    const end = dateValue(parts[2]);
+    if (!name) {
+      errors.push(`第 ${periods.length + 1} 条缺少假期名称`);
+      continue;
+    }
+    if (!start || !end || end < start) {
+      errors.push(`「${name}」的日期要是 YYYY-MM-DD，且结束不早于开始`);
+      continue;
+    }
+    const type = parts[3] ?? '';
+    const kind: HolidayKind = /寒|暑|学生/.test(type) ? 'student' : 'custom';
+    const daySpan = Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1;
+    const scale: HolidayScale = /短/.test(type) ? 'short' : (/长|寒|暑/.test(type) || daySpan > 3 ? 'long' : 'short');
+    periods.push({ name, start, end, kind, scale });
+  }
+  return { periods, errors };
+}
+
+export function formatHolidayText(periods: HolidayPeriod[]): string {
+  return periods.map((period) => {
+    const type = period.kind === 'student' ? '寒暑假' : period.scale === 'short' ? '短假' : '长假';
+    return `${period.name} | ${period.start} | ${period.end} | ${type}`;
+  }).join('\n');
+}
+
+/** 额外调休上班日：每行一个 YYYY-MM-DD，或「YYYY-MM-DD | 名称」。 */
+export function parseWorkdaysText(value: unknown): { workdays: string[]; errors: string[] } {
+  if (typeof value !== 'string') return { workdays: [], errors: [] };
+  const workdays: string[] = [];
+  const errors: string[] = [];
+  for (const rawLine of value.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const date = dateValue(line.split(/\||｜/)[0].trim());
+    if (!date) {
+      errors.push(`「${line.slice(0, 30)}」不是有效日期`);
+      continue;
+    }
+    if (!workdays.includes(date)) workdays.push(date);
+  }
+  return { workdays: workdays.sort(), errors };
+}
+
+export function formatWorkdaysText(workdays: string[]): string {
+  return workdays.join('\n');
+}
+
+/** 旅行地点池：每行「地点 | 近/远 | 最少天 | 最多天 | 日期段(可空) | 备注」。 */
+export function parseTravelText(value: unknown): { spots: TravelSpot[]; errors: string[] } {
+  if (typeof value !== 'string') return { spots: [], errors: [] };
+  const spots: TravelSpot[] = [];
+  const errors: string[] = [];
+  for (const rawLine of value.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (spots.length >= 20) {
+      errors.push('旅行地点最多 20 个，后面的没有保存');
+      break;
+    }
+    const parts = line.split(/\||｜/).map((part) => part.trim());
+    const name = (parts[0] ?? '').slice(0, 24);
+    if (!name) {
+      errors.push(`第 ${spots.length + 1} 条缺少地点名`);
+      continue;
+    }
+    const distance: TravelDistance = /远/.test(parts[1] ?? '') ? 'far' : 'near';
+    const minDays = Number(parts[2] ?? 1);
+    const maxDays = Number(parts[3] ?? Math.max(1, minDays));
+    if (!Number.isFinite(minDays) || !Number.isFinite(maxDays) || minDays < 1 || maxDays < minDays || maxDays > 15) {
+      errors.push(`「${name}」的天数要满足 1 ≤ 最少天 ≤ 最多天 ≤ 15`);
+      continue;
+    }
+    const range = (parts[4] ?? '').replace(/[～至]/g, '~');
+    const [fromRaw, toRaw] = range.split('~').map((part) => part.trim());
+    const from = fromRaw ? dateValue(fromRaw) : '';
+    const to = toRaw ? dateValue(toRaw) : (from ? from : '');
+    if ((fromRaw && !from) || (toRaw && !to) || (from && to && to < from)) {
+      errors.push(`「${name}」的指定日期要写成 YYYY-MM-DD~YYYY-MM-DD`);
+      continue;
+    }
+    if (spots.some((spot) => spot.name === name)) continue;
+    spots.push({
+      name,
+      distance,
+      minDays: Math.round(minDays),
+      maxDays: Math.round(maxDays),
+      from,
+      to,
+      note: (parts[5] ?? '').slice(0, 40),
+    });
+  }
+  return { spots, errors };
+}
+
+export function formatTravelText(spots: TravelSpot[]): string {
+  return spots.map((spot) => {
+    const range = spot.from ? `${spot.from}~${spot.to}` : '';
+    return [spot.name, spot.distance === 'far' ? '远' : '近', String(spot.minDays), String(spot.maxDays), range, spot.note]
+      .join(' | ').replace(/ \| $/, '');
+  }).join('\n');
+}
+
+function parseDaysText(value: string): number[] {  const compact = value.replace(/\s+/g, '');
   if (!compact) return [1, 2, 3, 4, 5, 6, 7];
   if (compact === '每天' || compact === '天天' || compact === '*' || compact === '每日') return [1, 2, 3, 4, 5, 6, 7];
   if (compact === '工作日' || compact === '周一到周五') return [1, 2, 3, 4, 5];

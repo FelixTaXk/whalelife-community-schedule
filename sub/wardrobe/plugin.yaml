@@ -1,0 +1,8 @@
+id: wardrobe
+name: 衣柜
+version: 0.2.1
+description: 用 ComfyUI 服装库全量 1407 套按日程配穿搭，按人格年龄与场景分级（日常/私密/泳装/派对），提供 wardrobe_today / wardrobe_now / wardrobe_for / wardrobe_pick / wardrobe_wear 工具和设置页。
+apiVersion: "1.0.0"
+depends: [tools, web]
+
+

@@ -3,6 +3,8 @@
 import { createHash } from 'node:crypto';
 import type { BlockKind, Config, Plan, PlanItem, Routine } from './types.ts';
 import { NOTES, TONES } from './types.ts';
+import { resolveDayInfo } from './holidays.ts';
+import { resolveTravel, type TravelOverride } from './travel.ts';
 import {
   MINUTES_PER_DAY, formatHHMM, hashSeed, isoWeekday, parseDateKey, parseHHMM, pick, weekdayLabel,
 } from './time.ts';
@@ -20,8 +22,8 @@ type Segment = {
   auto?: boolean;
 };
 
-/** 固定安排 1、三餐 2、正事 3、运动 4、通勤 5、起床/睡前 6；数字小的先占位。 */
-const PRIORITY = { fixed: 1, meal: 2, work: 3, exercise: 4, commute: 5, routine: 6 } as const;
+/** 固定安排 1、三餐 2、正事 3、旅行 3.5、运动 4、通勤 5、起床/睡前 6；数字小的先占位。 */
+const PRIORITY = { fixed: 1, meal: 2, work: 3, travel: 3.5, exercise: 4, commute: 5, routine: 6 } as const;
 
 const REST_TITLES = ['歇一会儿', '泡杯茶', '躺一会儿', '发呆放空'] as const;
 const CHORE_TITLES = ['收拾一下桌子', '洗衣服', '整理照片', '顺手买点菜'] as const;
@@ -30,8 +32,19 @@ export function routineHash(routine: Routine): string {
   return createHash('sha256').update(JSON.stringify(routine)).digest('hex').slice(0, 12);
 }
 
+/** 作息之外的节假日/旅行设置也参与“过期”判断；只改这些不会留下旧计划。 */
+export function configHash(config: Config): string {
+  return createHash('sha256').update(JSON.stringify({
+    routine: config.routine,
+    holiday: config.holiday,
+    travel: config.travel,
+  })).digest('hex').slice(0, 12);
+}
+
 export function isStale(plan: Plan | null, config: Config): boolean {
-  return Boolean(plan && !plan.edited && plan.routineHash !== routineHash(config.routine));
+  return Boolean(plan && !plan.edited && (
+    plan.routineHash !== routineHash(config.routine) || plan.configHash !== configHash(config)
+  ));
 }
 
 function subtract(
@@ -95,9 +108,11 @@ function freePiece(index: number, seedText: string): { title: string; kind: Bloc
 }
 
 /** 生成一天的日程骨架；空档已用自由安排铺好。 */
-export function generatePlan(config: Config, date: string): Plan {
+export function generatePlan(config: Config, date: string, travelOverride?: TravelOverride | null): Plan {
   const routine = config.routine;
   const weekday = isoWeekday(parseDateKey(date));
+  const info = resolveDayInfo(config.holiday, date, weekday);
+  const travel = resolveTravel(config.travel, info, date, travelOverride);
   const seed = hashSeed(`${date}|${routineHash(routine)}`);
 
   const wake = parseHHMM(routine.wake) ?? 7 * 60;
@@ -126,7 +141,7 @@ export function generatePlan(config: Config, date: string): Plan {
     anchor(wakeEnd, wakeEnd + routine.breakfastMinutes, '早餐', 'meal', PRIORITY.meal, { place: '家' });
   }
 
-  if (routine.work.enabled && routine.work.days.includes(weekday)) {
+  if (routine.work.enabled && (info.workday || (routine.work.days.includes(weekday) && !info.rest))) {
     const start = parseHHMM(routine.work.start);
     const end = parseHHMM(routine.work.end);
     if (start !== null && end !== null && end - start >= 30) {
@@ -158,6 +173,13 @@ export function generatePlan(config: Config, date: string): Plan {
     const start = parseHHMM(item.start);
     if (start === null) continue;
     anchor(start, start + item.minutes, item.title, 'fixed', PRIORITY.fixed, { place: item.place });
+  }
+  if (travel) {
+    const start = parseHHMM(travel.start);
+    const end = parseHHMM(travel.end);
+    if (start !== null && end !== null) {
+      anchor(start, end, travel.title, 'travel', PRIORITY.travel, { place: travel.place, note: travel.note });
+    }
   }
   if (routine.windDownMinutes > 0) {
     anchor(sleepCap - routine.windDownMinutes, sleepCap, '洗漱 · 准备睡', 'routine', PRIORITY.routine, { note: `睡觉 ${sleepAt}` });
@@ -220,6 +242,7 @@ export function generatePlan(config: Config, date: string): Plan {
     ...(segment.auto ? { auto: true } : {}),
   }));
 
+  const hasTravelItem = items.some((item) => item.kind === 'travel');
   return {
     version: 1,
     date,
@@ -228,10 +251,29 @@ export function generatePlan(config: Config, date: string): Plan {
     note: pick(NOTES, hashSeed(`${date}|note`)),
     source: 'auto',
     routineHash: routineHash(routine),
+    configHash: configHash(config),
     generatedAt: new Date().toISOString(),
     edited: false,
     items,
     sleepAt,
+    ...(info.holiday ? {
+      holiday: {
+        name: info.holiday.name,
+        kind: info.holiday.kind,
+        scale: info.holiday.scale,
+        dayIndex: info.holiday.dayIndex,
+        days: info.holiday.days,
+      },
+    } : {}),
+    ...(info.workday ? { workday: info.workday } : {}),
+    ...(travel && hasTravelItem ? {
+      travel: {
+        destination: travel.destination,
+        dayIndex: travel.dayIndex,
+        days: travel.days,
+        source: travel.source,
+      },
+    } : {}),
   };
 }
 

@@ -2,14 +2,17 @@
 
 import type { Context } from '../../../core/context.ts';
 import { augmentWithModel } from './ai.ts';
+import { resolveDayInfo } from './holidays.ts';
 import { generatePlan, isStale } from './plan.ts';
 import type { BlockKind, Config, ItemStatus, Plan, PlanItem } from './types.ts';
 import { BLOCK_KINDS, normalizeConfig } from './types.ts';
+import { resolveTravel, travelCandidates, travelKey, type TravelOverride } from './travel.ts';
+import { chooseTravelWithModel } from './travel-ai.ts';
 import type { WeatherBridge } from './weather-bridge.ts';
 import type { WeatherDay } from './weather-types.ts';
 import { applyWeatherRules, weatherKey } from './weather-rules.ts';
 import { Store } from './store.ts';
-import { addDays, dateKey, formatHHMM, isValidDateKey, minuteOfDay, parseHHMM } from './time.ts';
+import { addDays, dateKey, formatHHMM, isValidDateKey, isoWeekday, minuteOfDay, parseDateKey, parseHHMM } from './time.ts';
 
 export type EnsureOptions = { force?: boolean; allowAi?: boolean };
 
@@ -68,6 +71,29 @@ export class ScheduleService {
     return snapshot?.days.find((entry) => entry.date === date) ?? null;
   }
 
+  /** 长假/周末的旅行目的地：指定地点优先，其次 AI 从池里挑，最后用规则轮换。 */
+  private async travelOverride(config: Config, date: string): Promise<TravelOverride | null> {
+    if (!config.travel.enabled || !config.travel.aiChoose || config.travel.target) return null;
+    const info = resolveDayInfo(config.holiday, date, isoWeekday(parseDateKey(date)));
+    const base = resolveTravel(config.travel, info, date);
+    if (!base) return null;
+    const cached = await this.store.readTravelChoice(base.key).catch(() => null);
+    if (cached) return { destination: cached.destination, days: cached.days, source: 'ai', reason: cached.reason };
+    if (base.dayIndex !== 0) return null;
+    const candidates = travelCandidates(config.travel, info, date);
+    if (!candidates.length) return null;
+    const limit = info.holiday ? Math.min(info.holiday.days, 6) : 1;
+    try {
+      const choice = await chooseTravelWithModel(this.ctx, config, info, candidates, limit);
+      if (!choice) return null;
+      await this.store.writeTravelChoice({ ...choice, key: travelKey(info, date) });
+      return { destination: choice.destination, days: choice.days, source: 'ai', reason: choice.reason };
+    } catch (error) {
+      this.ctx.logger.warn('旅行 AI 选择失败，改用规则', { date, error: errorText(error) });
+      return null;
+    }
+  }
+
   static async create(ctx: Context): Promise<ScheduleService> {
     const raw = await ctx.config.read<unknown>('config.json').catch(() => ({}));
     return new ScheduleService(ctx, normalizeConfig(raw ?? {}));
@@ -116,7 +142,8 @@ export class ScheduleService {
         if (!stale && !weatherChanged) return existing;
       }
       const day = live ?? await this.fetchDay(date);
-      let plan = generatePlan(snapshot, date);
+      const override = options.allowAi === false ? null : await this.travelOverride(snapshot, date);
+      let plan = generatePlan(snapshot, date, override);
       plan = applyWeatherRules(plan, day, snapshot.routine);
       if (options.allowAi !== false && snapshot.ai.enabled && snapshot.ai.model) {
         try {

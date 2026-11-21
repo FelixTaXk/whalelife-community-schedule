@@ -21,9 +21,19 @@ export function sourceLabel(plan: Plan): string {
   return '自动';
 }
 
+export function dayTag(plan: Plan): string {
+  const tags: string[] = [];
+  if (plan.holiday) tags.push(`${plan.holiday.name}第${plan.holiday.dayIndex + 1}/${plan.holiday.days}天`);
+  if (plan.workday) tags.push(plan.workday);
+  if (plan.travel) tags.push(`旅行·${plan.travel.destination}`);
+  return tags.join(' · ');
+}
+
 export function planHeader(plan: Plan): string {
   const date = parseDateKey(plan.date);
-  return `${date.getMonth() + 1}月${date.getDate()}日 ${weekdayLabel(plan.weekday)} · ${plan.tone} · ${sourceLabel(plan)}`;
+  const base = `${date.getMonth() + 1}月${date.getDate()}日 ${weekdayLabel(plan.weekday)} · ${plan.tone} · ${sourceLabel(plan)}`;
+  const tag = dayTag(plan);
+  return tag ? `${base} · ${tag}` : base;
 }
 
 export function itemLine(item: PlanItem, detail: 'brief' | 'full'): string {
@@ -115,7 +125,8 @@ export function briefRange(entries: Array<{ date: string; plan: Plan | null }>):
       continue;
     }
     const date = parseDateKey(entry.date);
-    lines.push(`${date.getMonth() + 1}月${date.getDate()}日 ${weekdayLabel(entry.plan.weekday)} · ${entry.plan.tone} · ${sourceLabel(entry.plan)}`);
+    const tag = dayTag(entry.plan);
+    lines.push(`${date.getMonth() + 1}月${date.getDate()}日 ${weekdayLabel(entry.plan.weekday)} · ${entry.plan.tone} · ${sourceLabel(entry.plan)}${tag ? ` · ${tag}` : ''}`);
     for (const item of entry.plan.items) {
       if (item.kind === 'sleep') continue;
       lines.push(`  ${item.start}-${item.end} ${item.title}`);

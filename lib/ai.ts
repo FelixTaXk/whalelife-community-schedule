@@ -120,6 +120,9 @@ export function buildPrompt(config: Config, plan: Plan, gaps: Gap[]): { system: 
   const gapText = gaps.map((gap) => `${formatHHMM(gap.start)}-${formatHHMM(gap.end)}`).join('\n');
   const user = [
     `日期：${plan.date}`,
+    ...(plan.holiday ? [`今天是${plan.holiday.name}第 ${plan.holiday.dayIndex + 1}/${plan.holiday.days} 天，不排上班/上课。`] : []),
+    ...(plan.workday ? [`今天${plan.workday}，按工作日。`] : []),
+    ...(plan.travel ? [`已安排旅行：${plan.travel.destination}，第 ${plan.travel.dayIndex + 1}/${plan.travel.days} 天；空档只安排旅行中的吃饭、休息或返程，不要再加新的外出地点。`] : []),
     ...(plan.weather ? [weatherPromptLine(plan.weather), aiWeatherHint(plan.weather)] : []),
     `当天基调参考：${plan.tone}`,
     fixed ? `已有安排：\n${fixed}` : '已有安排：没有固定安排',

@@ -8,6 +8,9 @@ export type SettingsData = {
   config: Config;
   fixedText: string;
   hobbiesText: string;
+  holidayText: string;
+  holidayWorkdays: string;
+  travelText: string;
   models: Array<{ id: string; name: string; callable: boolean }>;
   status: { lastError: string; lastTickAt: string; reminderLastError?: string; reminderLastSentAt?: string };
   weather: { available: boolean; summary: string };
@@ -31,7 +34,7 @@ function options(models: SettingsData['models'], selected: string): string {
 }
 
 export function settingsPage(data: SettingsData): string {
-  const { config: cfg, fixedText, hobbiesText, models, status } = data;
+  const { config: cfg, fixedText, hobbiesText, holidayText, holidayWorkdays, travelText, models, status } = data;
   const presetOptions = PRESETS.map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)} · ${escapeHtml(preset.hint)}</option>`).join('');
   const aiHint = models.length
     ? '开启后会调用所选模型，把空档换成具体安排（每次约一次请求，45 秒超时；失败保留规则骨架）。'
@@ -129,6 +132,42 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
 </section>
 
 <section class="card">
+  <h2>节假日与假期 <span class="pill ${cfg.holiday.enabled ? 'good' : ''}">${cfg.holiday.enabled ? '已开启' : '已关闭'}</span></h2>
+  <div class="grid">
+    <label class="check wide"><input type="checkbox" name="holidayEnabled"${cfg.holiday.enabled ? ' checked' : ''}> 识别法定节假日，假期不排上课 / 上班</label>
+    <label class="check wide"><input type="checkbox" name="holidayBuiltin"${cfg.holiday.builtin ? ' checked' : ''}> 内置 2026–2027 法定节假日和官方调休上班日</label>
+    <label class="check wide"><input type="checkbox" name="holidayStudent"${cfg.holiday.student ? ' checked' : ''}> 学生模式：寒暑假、春秋假也跳过正事（只认下面 type 为寒暑假的条目）</label>
+  </div>
+  <label>自定义假期（每行：名称 | 开始 | 结束 | 短假/长假/寒暑假）
+    <textarea name="holidayText" spellcheck="false" placeholder="寒假 | 2027-01-25 | 2027-02-20 | 寒暑假&#10;春假 | 2027-04-01 | 2027-04-07 | 长假&#10;自定义短假 | 2027-06-01 | 2027-06-03 | 短假">${escapeHtml(holidayText)}</textarea>
+  </label>
+  <label>额外调休上班日（可空，每行一个 YYYY-MM-DD，或「日期 | 名称」）
+    <textarea name="holidayWorkdays" spellcheck="false" placeholder="2027-02-14&#10;2027-10-09">${escapeHtml(holidayWorkdays)}</textarea>
+  </label>
+  <p class="hint">法定假日会自动跳过正事；普通周末默认不排，仍按作息里的星期决定；调休上班日强制按工作日。寒暑假 / 春秋假没有全国统一日期，需要你按学校日历填；内置表只到 2027 年，之后用自定义假期补。</p>
+</section>
+
+<section class="card">
+  <h2>旅行 <span class="pill ${cfg.travel.enabled ? 'warn' : ''}">${cfg.travel.enabled ? '已开启' : '默认关闭'}</span></h2>
+  <div class="grid">
+    <label class="check wide"><input type="checkbox" name="travelEnabled"${cfg.travel.enabled ? ' checked' : ''}> 在周末和假期自动安排旅行</label>
+    <label class="check"><input type="checkbox" name="travelWeekend"${cfg.travel.weekend ? ' checked' : ''}> 周末短途</label>
+    <label class="check"><input type="checkbox" name="travelShort"${cfg.travel.shortHoliday ? ' checked' : ''}> 3 天左右短假</label>
+    <label class="check"><input type="checkbox" name="travelLong"${cfg.travel.longHoliday ? ' checked' : ''}> 五一 / 国庆 / 寒暑假远途</label>
+    <label>周末频率（1 = 每周，2 = 隔周）<input type="number" name="travelEvery" min="1" max="4" value="${cfg.travel.weekendEvery}"></label>
+    <label class="check wide"><input type="checkbox" name="travelAi"${cfg.travel.aiChoose ? ' checked' : ''}> 让 AI 从地点池里选目的地（失败自动按规则选）</label>
+    <label>指定目的地（可空，优先于地点池和 AI）<input type="text" name="travelTarget" maxlength="24" value="${escapeHtml(cfg.travel.target)}" placeholder="例如：杭州"></label>
+    <label>指定从<input type="date" name="travelTargetFrom" value="${escapeHtml(cfg.travel.targetFrom)}"></label>
+    <label>指定到<input type="date" name="travelTargetTo" value="${escapeHtml(cfg.travel.targetTo)}"></label>
+    <label class="wide">旅行偏好（可空）<textarea name="travelStyle" maxlength="300" placeholder="例如：喜欢自然风景和博物馆，少爬山；周末车程不超过 2 小时；长假可以坐高铁。">${escapeHtml(cfg.travel.style)}</textarea></label>
+  </div>
+  <label>地点池（每行：地点 | 近/远 | 最少天 | 最多天 | 指定日期段(可空) | 备注）
+    <textarea name="travelText" spellcheck="false" placeholder="常州恐龙园 | 近 | 1 | 1 | | 适合周六一日游&#10;杭州 | 远 | 3 | 5 | 2027-10-01~2027-10-05 | 西湖、灵隐寺&#10;苏州 | 近 | 1 | 2 | | 园林和面馆">${escapeHtml(travelText)}</textarea>
+  </label>
+  <p class="hint">「近」用于周末和 3 天短假，「远」用于五一、国庆、寒暑假。指定日期段可以让某个地点只对某次假期生效；留空则由规则或 AI 选。旅行会占 08:30–20:30 的大块时间，三餐会把它切开，旅行日不再排运动。</p>
+</section>
+
+<section class="card">
   <h2>AI 润色 <span class="pill ${cfg.ai.enabled ? 'warn' : ''}">${cfg.ai.enabled ? '已开启' : '默认关闭'}</span></h2>
   <div class="grid">
     <label class="check wide"><input type="checkbox" name="aiEnabled" id="aiEnabled"${cfg.ai.enabled ? ' checked' : ''}> 用模型把空档换成更具体的安排</label>
@@ -151,7 +190,7 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
     <label>安静结束<input type="time" name="reminderQuietEnd" value="${escapeHtml(cfg.reminder.quietEnd)}"></label>
     <label class="check wide"><input type="checkbox" name="reminderUsePersona"${cfg.reminder.usePersona ? ' checked' : ''}> 用迟宝的语气生成，不只是一句模板</label>
   </div>
-  <p class="hint">只提醒起床、正事、通勤、三餐、运动、固定安排和睡觉；自由空档不提醒。QQ 私聊的 peer 一般写 <code>direct:对方QQ号</code>，账号可留空（用当前登录的 QQ）；目标没填全时不会发送。</p>
+  <p class="hint">只提醒起床、正事、通勤、三餐、运动、固定安排、旅行和睡觉；自由空档不提醒。QQ 私聊的 peer 一般写 <code>direct:对方QQ号</code>，账号可留空（用当前登录的 QQ）；目标没填全时不会发送。</p>
   ${status.reminderLastError ? `<div class="alert bad"><b>上次提醒失败</b><br>${escapeHtml(status.reminderLastError)}</div>` : ''}
   ${status.reminderLastSentAt ? `<p class="hint">上次主动提醒：${escapeHtml(new Date(status.reminderLastSentAt).toLocaleString('zh-CN'))}</p>` : ''}
   <div class="row" style="margin:10px 0 0"><button type="button" id="testReminder">发送测试提醒</button><span class="hint" style="margin:0">测试会立刻走一次当前渠道，不写日程提醒记录。</span></div>
@@ -189,6 +228,10 @@ form.onsubmit=async(e)=>{
       reminder:{enabled:checked('reminderEnabled'),channel:val('reminderChannel'),account:val('reminderAccount'),peer:val('reminderPeer'),
         leadMinutes:num('reminderLead'),maxPerDay:num('reminderMax'),quietStart:val('reminderQuietStart'),quietEnd:val('reminderQuietEnd'),
         usePersona:checked('reminderUsePersona')},
+      holiday:{enabled:checked('holidayEnabled'),builtin:checked('holidayBuiltin'),student:checked('holidayStudent')},
+      travel:{enabled:checked('travelEnabled'),weekend:checked('travelWeekend'),shortHoliday:checked('travelShort'),longHoliday:checked('travelLong'),
+        weekendEvery:num('travelEvery'),aiChoose:checked('travelAi'),target:val('travelTarget'),targetFrom:val('travelTargetFrom'),targetTo:val('travelTargetTo'),
+        style:val('travelStyle')},
       routine:{wake:val('wake'),sleep:val('sleep'),wakeMinutes:num('wakeMinutes'),breakfastMinutes:num('breakfastMinutes'),
         commuteMinutes:num('commuteMinutes'),windDownMinutes:num('windDownMinutes'),
         work:{enabled:checked('workEnabled'),title:val('workTitle'),days:days('workDays'),start:val('workStart'),end:val('workEnd'),place:val('workPlace')},
@@ -196,7 +239,7 @@ form.onsubmit=async(e)=>{
         dinner:{enabled:checked('dinnerEnabled'),start:val('dinnerStart'),minutes:num('dinnerMinutes')},
         exercise:{enabled:checked('exerciseEnabled'),title:val('exerciseTitle'),days:days('exerciseDays'),start:val('exerciseStart'),minutes:num('exerciseMinutes')},
       }};
-    const r=await post('config',{action:'save',config,fixedText:val('fixedText'),hobbiesText:val('hobbies')});
+    const r=await post('config',{action:'save',config,fixedText:val('fixedText'),hobbiesText:val('hobbies'),holidayText:val('holidayText'),holidayWorkdays:val('holidayWorkdays'),travelText:val('travelText')});
     setMsg(r.warnings&&r.warnings.length?'已保存，有提醒：'+r.warnings.join('；'):'已保存。今天和后面的计划会按新作息补排。');
   }catch(error){setMsg('没保存：'+error.message,true)}
   finally{if(button)button.disabled=false}

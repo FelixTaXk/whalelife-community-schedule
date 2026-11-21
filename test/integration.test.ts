@@ -85,6 +85,8 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   assert.match(settingsHtml, /日程/);
   assert.match(settingsHtml, /主动提醒/);
   assert.match(settingsHtml, /reminderEnabled/);
+  assert.match(settingsHtml, /节假日与假期/);
+  assert.match(settingsHtml, /旅行/);
   assert.match(settingsHtml, /发送测试提醒/);
 
   const reminderConfig = await (await request('/plugins/schedule/config', {
@@ -94,6 +96,23 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   assert.equal(reminderConfig.config.reminder.enabled, true);
   assert.equal(reminderConfig.config.reminder.account, '10001');
   assert.equal(reminderConfig.config.reminder.leadMinutes, 8);
+
+  const calendarConfig = await (await request('/plugins/schedule/config', {
+    action: 'save',
+    config: {
+      enabled: true,
+      holiday: { enabled: true, builtin: true, student: true },
+      travel: { enabled: false, weekend: true, shortHoliday: true, longHoliday: true, weekendEvery: 1, aiChoose: false },
+    },
+    holidayText: '寒假 | 2027-01-25 | 2027-02-20 | 寒暑假',
+    holidayWorkdays: '2027-02-14',
+    travelText: '杭州 | 远 | 3 | 5 | 2027-10-01~2027-10-05 | 西湖',
+  })).json();
+  assert.equal(calendarConfig.config.holiday.student, true);
+  assert.equal(calendarConfig.config.holiday.periods[0].kind, 'student');
+  assert.deepEqual(calendarConfig.config.holiday.workdays, ['2027-02-14']);
+  assert.equal(calendarConfig.config.travel.spots[0].name, '杭州');
+  assert.equal(calendarConfig.config.travel.spots[0].from, '2027-10-01');
 
   const calendar = await request('/plugins/schedule/calendar');
   assert.equal(calendar.status, 200);
@@ -117,7 +136,6 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   assert.deepEqual(toolNames.sort(), ['schedule_edit', 'schedule_generate', 'schedule_now', 'schedule_range', 'schedule_today']);
   const todayText = String((await app.tools.call('schedule_today', {}, { permission: 'full' })).result);
   assert.match(todayText, /起床/);
-  assert.match(todayText, /上班|上课/);
   const nowText = String((await app.tools.call('schedule_now', {}, { permission: 'full' })).result);
   assert.match(nowText, /现在 \d{2}:\d{2}/);
   const editText = String((await app.tools.call('schedule_edit', { action: 'status', id: 'i1', status: 'done' }, { permission: 'full' })).result);
@@ -243,7 +261,7 @@ test('AI 润色：开启后用模型填空档，失败保留骨架', async (t) =
   };
 
   const polished = await (await request('/plugins/schedule/generate', { date, force: true })).json();
-  assert.equal(polished.plan.source, 'ai');
+  assert.equal(polished.plan.source, 'ai', String(polished.plan.aiError));
   assert.ok(polished.plan.items.some((item: any) => item.title === '看两集剧'));
   assert.equal(polished.plan.tone, '安静');
   assert.ok(requests.length >= 1);
