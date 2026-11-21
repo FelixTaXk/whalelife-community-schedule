@@ -24,8 +24,8 @@ function localDate(offset = 0): string {
 function sampleForecast() {
   const dates = Array.from({ length: 7 }, (_, index) => localDate(index));
   return {
-    latitude: 31.77359,
-    longitude: 119.95401,
+    latitude: 31.2304,
+    longitude: 121.4737,
     timezone: 'Asia/Shanghai',
     current: {
       time: `${dates[0]}T10:15`,
@@ -63,13 +63,13 @@ test('天气纯函数：代码映射、建议、解析、城市表、配置校�
   assert.equal(outdoorFriendly(61, 80, 18), false);
 
   const config = { ...defaultConfig(), apiBase: 'http://example.test', forecastDays: 5 };
-  const url = new URL(forecastUrl(config, 31.77359, 119.95401));
+  const url = new URL(forecastUrl(config, 31.2304, 121.4737));
   assert.equal(url.pathname, '/v1/forecast');
   assert.equal(url.searchParams.get('forecast_days'), '5');
   assert.equal(url.searchParams.get('timezone'), 'auto');
   assert.match(url.searchParams.get('current') ?? '', /temperature_2m/);
 
-  const snapshot = parseForecast(sampleForecast(), { place: '常州', latitude: 31.7, longitude: 119.9 });
+  const snapshot = parseForecast(sampleForecast(), { place: '上海', latitude: 31.2, longitude: 121.5 });
   assert.equal(snapshot.days.length, 7);
   assert.equal(snapshot.now?.temperature, 12.8);
   assert.equal(snapshot.now?.text, '晴');
@@ -78,8 +78,8 @@ test('天气纯函数：代码映射、建议、解析、城市表、配置校�
   assert.equal(snapshot.days[3].tip, '有雷雨，别在户外久留');
   assert.equal(snapshot.timezone, 'Asia/Shanghai');
 
-  assert.equal(findCity('常州')?.latitude, 31.77359);
-  assert.equal(findCity('常州市')?.name, '常州');
+  assert.equal(findCity('上海')?.latitude, 31.2304);
+  assert.equal(findCity('上海市')?.name, '上海');
   assert.equal(findCity('不存在的城市'), null);
 
   const normalized = normalizeConfig({ latitude: '200', longitude: 'abc', refreshMinutes: 1, forecastDays: 99, timeoutSeconds: 99 });
@@ -127,9 +127,9 @@ async function fixture(t: TestContext) {
 
   await mkdir(join(root, 'plugins/schedule/sub/weather/data'), { recursive: true });
   await writeFile(join(root, 'plugins/schedule/sub/weather/data/config.json'), JSON.stringify({
-    city: '常州',
-    latitude: 31.77359,
-    longitude: 119.95401,
+    city: '上海',
+    latitude: 31.2304,
+    longitude: 121.4737,
     refreshMinutes: 30,
     forecastDays: 7,
     timeoutSeconds: 4,
@@ -231,7 +231,7 @@ test('天气子插件：独立页面、缓存、地理编码、父插件天气�
   const html = await page.text();
   assert.match(html, /未来 7 天/);
   assert.match(html, /12\.8/);
-  assert.match(html, /常州/);
+  assert.match(html, /上海/);
 
   const data = await (await request('/plugins/schedule/weather/data', { force: false })).json();
   assert.equal(data.ok, true);
@@ -245,9 +245,9 @@ test('天气子插件：独立页面、缓存、地理编码、父插件天气�
   const forced = await (await request('/plugins/schedule/weather/data', { force: true })).json();
   assert.equal(calls().forecastCalls, 2, 'force 会重新请求');
 
-  const local = await (await request('/plugins/schedule/weather/config', { action: 'geocode', city: '常州' })).json();
+  const local = await (await request('/plugins/schedule/weather/config', { action: 'geocode', city: '上海' })).json();
   assert.equal(local.ok, true);
-  assert.equal(local.result.latitude, 31.77359);
+  assert.equal(local.result.latitude, 31.2304);
   assert.equal(local.result.source, '常用城市表');
 
   const remote = await (await request('/plugins/schedule/weather/config', { action: 'geocode', city: 'Testville' })).json();
@@ -265,12 +265,12 @@ test('天气子插件：独立页面、缓存、地理编码、父插件天气�
   assert.equal(generated.plan.weather?.text, '晴');
   assert.equal(generated.plan.weatherKey, '0001');
   const todayText = String((await app.tools.call('schedule_today', {}, { permission: 'full' })).result);
-  assert.match(todayText, /天气：常州 · 晴/);
+  assert.match(todayText, /天气：上海 · 晴/);
   const nowText = String((await app.tools.call('schedule_now', {}, { permission: 'full' })).result);
   assert.match(nowText, /天气：/);
 
   const now = String((await app.tools.call('weather_now', {}, { permission: 'full' })).result);
-  assert.match(now, /常州/);
+  assert.match(now, /上海/);
   assert.match(now, /12\.8℃/);
   const forecast = String((await app.tools.call('weather_forecast', { days: 3 }, { permission: 'full' })).result);
   assert.match(forecast, /未来|今天|明天|周/);
@@ -300,5 +300,5 @@ test('天气子插件停用：父插件不受影响，恢复后重新接上', as
   const weatherPage = await request('/plugins/schedule/weather/settings');
   assert.equal(weatherPage.status, 200);
   const back = await (await request('/plugins/schedule/settings')).text();
-  assert.match(back, /子插件已连接|还没有取到天气|常州/);
+  assert.match(back, /子插件已连接|还没有取到天气|上海/);
 });

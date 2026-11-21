@@ -13,6 +13,8 @@ export type DayInfo = {
   date: string;
   weekday: number;
   weekend: boolean;
+  /** 当前配置的周末日（1 = 周一 … 7 = 周日），供旅行起算使用。 */
+  weekendDays: number[];
   holiday: HolidayDay | null;
   /** 调休上班日名称；有值时当天按工作日。 */
   workday: string;
@@ -77,10 +79,11 @@ function activeWorkdays(config: HolidayConfig): Set<string> {
 
 /** 当天命中的假期、调休上班日和是否休息。重叠时取开始更晚的假期，避免旧假期盖住新假期。 */
 export function resolveDayInfo(config: HolidayConfig, date: string, weekday: number): DayInfo {
-  const weekend = weekday >= 6;
+  const weekendDays = config.weekendDays?.length ? config.weekendDays : [6, 7];
+  const weekend = weekendDays.includes(weekday);
   const workdays = activeWorkdays(config);
   if (workdays.has(date)) {
-    return { date, weekday, weekend, holiday: null, workday: '调休上班', rest: false, studentVacation: false };
+    return { date, weekday, weekend, weekendDays, holiday: null, workday: '调休上班', rest: false, studentVacation: false };
   }
   const candidates = activePeriods(config)
     .filter((period) => date >= period.start && date <= period.end)
@@ -96,6 +99,7 @@ export function resolveDayInfo(config: HolidayConfig, date: string, weekday: num
     date,
     weekday,
     weekend,
+    weekendDays,
     holiday,
     workday: '',
     rest: Boolean(holiday),

@@ -111,9 +111,9 @@ ${stale}
   <h2>天气设置</h2>
   <form id="form">
     <div class="grid3">
-      <label>城市<input type="text" name="city" maxlength="30" value="${escapeHtml(config.city)}" placeholder="常州"></label>
-      <label>纬度<input type="number" step="0.00001" name="latitude" value="${numberValue(config.latitude)}" placeholder="31.77359"></label>
-      <label>经度<input type="number" step="0.00001" name="longitude" value="${numberValue(config.longitude)}" placeholder="119.95401"></label>
+      <label>城市<input type="text" name="city" maxlength="30" value="${escapeHtml(config.city)}" placeholder="城市名，可留空"></label>
+      <label>纬度<input type="number" step="0.00001" name="latitude" value="${numberValue(config.latitude)}" placeholder="例如 31.23"></label>
+      <label>经度<input type="number" step="0.00001" name="longitude" value="${numberValue(config.longitude)}" placeholder="例如 121.47"></label>
       <label>刷新间隔（分钟）<input type="number" name="refreshMinutes" min="5" max="180" value="${config.refreshMinutes}"></label>
       <label>预报天数<input type="number" name="forecastDays" min="1" max="7" value="${config.forecastDays}"></label>
       <label>请求超时（秒）<input type="number" name="timeoutSeconds" min="2" max="30" value="${config.timeoutSeconds}"></label>

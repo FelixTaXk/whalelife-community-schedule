@@ -3,7 +3,6 @@
 export type CityEntry = { name: string; province: string; latitude: number; longitude: number };
 
 export const CITIES: readonly CityEntry[] = [
-  { name: '常州', province: '江苏', latitude: 31.77359, longitude: 119.95401 },
   { name: '北京', province: '北京', latitude: 39.9042, longitude: 116.4074 },
   { name: '上海', province: '上海', latitude: 31.2304, longitude: 121.4737 },
   { name: '广州', province: '广东', latitude: 23.1291, longitude: 113.2644 },

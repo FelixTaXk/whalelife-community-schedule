@@ -123,7 +123,7 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
 <section class="card">
   <h2>固定安排 <span class="pill">可选</span></h2>
   <label>每行一条：标题 | 星期 | 开始 | 分钟 | 地点
-    <textarea name="fixedText" spellcheck="false" placeholder="买糖葫芦 | 1,3,5 | 17:20 | 20 | 校门口&#10;和同桌约画 | 6 | 15:00 | 90 | 图书馆">${escapeHtml(fixedText)}</textarea>
+    <textarea name="fixedText" spellcheck="false" placeholder="买日用品 | 1,3,5 | 17:20 | 20 | 超市&#10;和朋友吃饭 | 6 | 15:00 | 90 | 餐厅">${escapeHtml(fixedText)}</textarea>
   </label>
   <p class="hint">星期写 1–7（周一 = 1），或 每天 / 工作日 / 周末。固定安排优先级最高，会和正事、三餐自动让位。</p>
   <label>爱好池（空档从这里轮着挑，一行一个或用顿号分隔）
@@ -135,8 +135,9 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
   <h2>节假日与假期 <span class="pill ${cfg.holiday.enabled ? 'good' : ''}">${cfg.holiday.enabled ? '已开启' : '已关闭'}</span></h2>
   <div class="grid">
     <label class="check wide"><input type="checkbox" name="holidayEnabled"${cfg.holiday.enabled ? ' checked' : ''}> 识别法定节假日，假期不排上课 / 上班</label>
-    <label class="check wide"><input type="checkbox" name="holidayBuiltin"${cfg.holiday.builtin ? ' checked' : ''}> 内置 2026–2027 法定节假日和官方调休上班日</label>
+    <label class="check wide"><input type="checkbox" name="holidayBuiltin"${cfg.holiday.builtin ? ' checked' : ''}> 使用内置中国 2026–2027 法定节假日和官方调休日（可选）</label>
     <label class="check wide"><input type="checkbox" name="holidayStudent"${cfg.holiday.student ? ' checked' : ''}> 学生模式：寒暑假、春秋假也跳过正事（只认下面 type 为寒暑假的条目）</label>
+    <div class="wide"><span class="muted">哪几天算周末</span><div class="days" style="margin-top:6px">${chips('holidayWeekendDays', cfg.holiday.weekendDays ?? [6, 7])}</div></div>
   </div>
   <label>自定义假期（每行：名称 | 开始 | 结束 | 短假/长假/寒暑假）
     <textarea name="holidayText" spellcheck="false" placeholder="寒假 | 2027-01-25 | 2027-02-20 | 寒暑假&#10;春假 | 2027-04-01 | 2027-04-07 | 长假&#10;自定义短假 | 2027-06-01 | 2027-06-03 | 短假">${escapeHtml(holidayText)}</textarea>
@@ -144,7 +145,7 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
   <label>额外调休上班日（可空，每行一个 YYYY-MM-DD，或「日期 | 名称」）
     <textarea name="holidayWorkdays" spellcheck="false" placeholder="2027-02-14&#10;2027-10-09">${escapeHtml(holidayWorkdays)}</textarea>
   </label>
-  <p class="hint">法定假日会自动跳过正事；普通周末默认不排，仍按作息里的星期决定；调休上班日强制按工作日。寒暑假 / 春秋假没有全国统一日期，需要你按学校日历填；内置表只到 2027 年，之后用自定义假期补。</p>
+  <p class="hint">默认不套用任何国家的节假日表；中国用户可打开内置表，其他地区用自定义假期和额外调休日。普通周末默认不排正事，按上面的「周末」和作息里的星期决定；调休上班日强制按工作日。寒暑假 / 春秋假没有全国统一日期，需要按学校日历填；内置表只到 2027 年，之后用自定义假期补。</p>
 </section>
 
 <section class="card">
@@ -153,18 +154,18 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
     <label class="check wide"><input type="checkbox" name="travelEnabled"${cfg.travel.enabled ? ' checked' : ''}> 在周末和假期自动安排旅行</label>
     <label class="check"><input type="checkbox" name="travelWeekend"${cfg.travel.weekend ? ' checked' : ''}> 周末短途</label>
     <label class="check"><input type="checkbox" name="travelShort"${cfg.travel.shortHoliday ? ' checked' : ''}> 3 天左右短假</label>
-    <label class="check"><input type="checkbox" name="travelLong"${cfg.travel.longHoliday ? ' checked' : ''}> 五一 / 国庆 / 寒暑假远途</label>
+    <label class="check"><input type="checkbox" name="travelLong"${cfg.travel.longHoliday ? ' checked' : ''}> 长假期（3 天以上）远途</label>
     <label>周末频率（1 = 每周，2 = 隔周）<input type="number" name="travelEvery" min="1" max="4" value="${cfg.travel.weekendEvery}"></label>
     <label class="check wide"><input type="checkbox" name="travelAi"${cfg.travel.aiChoose ? ' checked' : ''}> 让 AI 从地点池里选目的地（失败自动按规则选）</label>
-    <label>指定目的地（可空，优先于地点池和 AI）<input type="text" name="travelTarget" maxlength="24" value="${escapeHtml(cfg.travel.target)}" placeholder="例如：杭州"></label>
+    <label>指定目的地（可空，优先于地点池和 AI）<input type="text" name="travelTarget" maxlength="24" value="${escapeHtml(cfg.travel.target)}" placeholder="例如：想去的地方"></label>
     <label>指定从<input type="date" name="travelTargetFrom" value="${escapeHtml(cfg.travel.targetFrom)}"></label>
     <label>指定到<input type="date" name="travelTargetTo" value="${escapeHtml(cfg.travel.targetTo)}"></label>
     <label class="wide">旅行偏好（可空）<textarea name="travelStyle" maxlength="300" placeholder="例如：喜欢自然风景和博物馆，少爬山；周末车程不超过 2 小时；长假可以坐高铁。">${escapeHtml(cfg.travel.style)}</textarea></label>
   </div>
   <label>地点池（每行：地点 | 近/远 | 最少天 | 最多天 | 指定日期段(可空) | 备注）
-    <textarea name="travelText" spellcheck="false" placeholder="常州恐龙园 | 近 | 1 | 1 | | 适合周六一日游&#10;杭州 | 远 | 3 | 5 | 2027-10-01~2027-10-05 | 西湖、灵隐寺&#10;苏州 | 近 | 1 | 2 | | 园林和面馆">${escapeHtml(travelText)}</textarea>
+    <textarea name="travelText" spellcheck="false" placeholder="城市公园 | 近 | 1 | 1 | | 适合周末一日游&#10;附近城市 | 远 | 3 | 5 | 2027-10-01~2027-10-05 | 提前订票&#10;郊外古镇 | 近 | 1 | 2 | | 半天车程">${escapeHtml(travelText)}</textarea>
   </label>
-  <p class="hint">「近」用于周末和 3 天短假，「远」用于五一、国庆、寒暑假。指定日期段可以让某个地点只对某次假期生效；留空则由规则或 AI 选。旅行会占 08:30–20:30 的大块时间，三餐会把它切开，旅行日不再排运动。</p>
+  <p class="hint">「近」用于周末和 3 天左右短假，「远」用于长假期。指定日期段可以让某个地点只对某次假期生效；留空则由规则或 AI 选。旅行会占 08:30–20:30 的大块时间，三餐会把它切开，旅行日不再排运动。</p>
 </section>
 
 <section class="card">
@@ -172,7 +173,7 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
   <div class="grid">
     <label class="check wide"><input type="checkbox" name="aiEnabled" id="aiEnabled"${cfg.ai.enabled ? ' checked' : ''}> 用模型把空档换成更具体的安排</label>
     <label>模型<select name="aiModel" id="aiModel">${options(models, cfg.ai.model)}</select></label>
-    <label>额外要求（可空）<textarea name="aiStyle" maxlength="300" placeholder="例如：晚上尽量别排新的事，留给画画；周末可以出去走走。">${escapeHtml(cfg.ai.style)}</textarea></label>
+    <label>额外要求（可空）<textarea name="aiStyle" maxlength="300" placeholder="例如：晚上尽量别排新的事；周末留一点出门的时间。">${escapeHtml(cfg.ai.style)}</textarea></label>
   </div>
   <p class="hint">${aiHint}</p>
 </section>
@@ -188,9 +189,10 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
     <label>每天最多<input type="number" name="reminderMax" min="1" max="20" value="${cfg.reminder.maxPerDay}"></label>
     <label>安静开始<input type="time" name="reminderQuietStart" value="${escapeHtml(cfg.reminder.quietStart)}"></label>
     <label>安静结束<input type="time" name="reminderQuietEnd" value="${escapeHtml(cfg.reminder.quietEnd)}"></label>
-    <label class="check wide"><input type="checkbox" name="reminderUsePersona"${cfg.reminder.usePersona ? ' checked' : ''}> 用迟宝的语气生成，不只是一句模板</label>
+    <label>人格 ID（可空 = 宿主当前人格）<input type="text" name="reminderPersona" maxlength="40" value="${escapeHtml(cfg.reminder.persona)}" placeholder="留空即用当前人格"></label>
+    <label class="check wide"><input type="checkbox" name="reminderUsePersona"${cfg.reminder.usePersona ? ' checked' : ''}> 用该人格的语气生成，不只是一句模板</label>
   </div>
-  <p class="hint">只提醒起床、正事、通勤、三餐、运动、固定安排、旅行和睡觉；自由空档不提醒。QQ 私聊的 peer 一般写 <code>direct:对方QQ号</code>，账号可留空（用当前登录的 QQ）；目标没填全时不会发送。</p>
+  <p class="hint">只提醒起床、正事、通勤、三餐、运动、固定安排、旅行和睡觉；自由空档不提醒。QQ 私聊的 peer 一般写 <code>direct:对方QQ号</code>，账号可留空（用当前登录的 QQ）；目标没填全时不会发送。人格 ID 留空时使用宿主当前 Web 人格，填了就必须是已存在的人格。</p>
   ${status.reminderLastError ? `<div class="alert bad"><b>上次提醒失败</b><br>${escapeHtml(status.reminderLastError)}</div>` : ''}
   ${status.reminderLastSentAt ? `<p class="hint">上次主动提醒：${escapeHtml(new Date(status.reminderLastSentAt).toLocaleString('zh-CN'))}</p>` : ''}
   <div class="row" style="margin:10px 0 0"><button type="button" id="testReminder">发送测试提醒</button><span class="hint" style="margin:0">测试会立刻走一次当前渠道，不写日程提醒记录。</span></div>
@@ -226,9 +228,10 @@ form.onsubmit=async(e)=>{
     const config={enabled:checked('enabled'),generateAt:val('generateAt'),daysAhead:num('daysAhead'),keepDays:num('keepDays'),
       ai:{enabled:checked('aiEnabled'),model:val('aiModel'),style:val('aiStyle')},
       reminder:{enabled:checked('reminderEnabled'),channel:val('reminderChannel'),account:val('reminderAccount'),peer:val('reminderPeer'),
+        persona:val('reminderPersona'),
         leadMinutes:num('reminderLead'),maxPerDay:num('reminderMax'),quietStart:val('reminderQuietStart'),quietEnd:val('reminderQuietEnd'),
         usePersona:checked('reminderUsePersona')},
-      holiday:{enabled:checked('holidayEnabled'),builtin:checked('holidayBuiltin'),student:checked('holidayStudent')},
+      holiday:{enabled:checked('holidayEnabled'),builtin:checked('holidayBuiltin'),student:checked('holidayStudent'),weekendDays:days('holidayWeekendDays')},
       travel:{enabled:checked('travelEnabled'),weekend:checked('travelWeekend'),shortHoliday:checked('travelShort'),longHoliday:checked('travelLong'),
         weekendEvery:num('travelEvery'),aiChoose:checked('travelAi'),target:val('travelTarget'),targetFrom:val('travelTargetFrom'),targetTo:val('travelTargetTo'),
         style:val('travelStyle')},

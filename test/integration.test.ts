@@ -22,9 +22,9 @@ async function fixture(t: TestContext) {
     routine: { work: { days: [1, 2, 3, 4, 5, 6, 7] } },
   }));
   await writeFile(join(root, 'plugins/schedule/sub/weather/data/config.json'), JSON.stringify({
-    city: '常州',
-    latitude: 31.77359,
-    longitude: 119.95401,
+    city: '示例城',
+    latitude: 30,
+    longitude: 120,
     refreshMinutes: 30,
     forecastDays: 7,
     timeoutSeconds: 2,
@@ -37,8 +37,8 @@ async function fixture(t: TestContext) {
     providers: [{ id: 'test', name: 'Test', base_url: 'https://unused.example/v1', api_key: 'synthetic-secret' }],
     models: [{ id: 'chat', name: '测试模型', provider: 'test', model: 'test', type: 'chat', enabled: true, context_window: 200000 }],
     model_bindings: { chat: 'chat' },
-    personas: { whale: { name: '周小迟', file: 'whale.md', model: 'chat', permission: 'full' } },
-    channels: { web: { persona: 'whale', permission: 'full' } },
+    personas: { main: { name: '测试人格', file: 'main.md', model: 'chat', permission: 'full' } },
+    channels: { web: { persona: 'main', permission: 'full' } },
     memory: { root: 'memory' },
   }));
   const app = await boot(root);
@@ -82,6 +82,7 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   const settings = await request('/plugins/schedule/settings');
   assert.equal(settings.status, 200);
   const settingsHtml = await settings.text();
+  assert.match(settingsHtml, /v0\.5\.2/, '设置页版本号应从 plugin.yaml 读取');
   assert.match(settingsHtml, /日程/);
   assert.match(settingsHtml, /主动提醒/);
   assert.match(settingsHtml, /reminderEnabled/);
@@ -106,12 +107,12 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
     },
     holidayText: '寒假 | 2027-01-25 | 2027-02-20 | 寒暑假',
     holidayWorkdays: '2027-02-14',
-    travelText: '杭州 | 远 | 3 | 5 | 2027-10-01~2027-10-05 | 西湖',
+    travelText: '示例目的地 | 远 | 3 | 5 | 2027-10-01~2027-10-05 | 测试',
   })).json();
   assert.equal(calendarConfig.config.holiday.student, true);
   assert.equal(calendarConfig.config.holiday.periods[0].kind, 'student');
   assert.deepEqual(calendarConfig.config.holiday.workdays, ['2027-02-14']);
-  assert.equal(calendarConfig.config.travel.spots[0].name, '杭州');
+  assert.equal(calendarConfig.config.travel.spots[0].name, '示例目的地');
   assert.equal(calendarConfig.config.travel.spots[0].from, '2027-10-01');
 
   const calendar = await request('/plugins/schedule/calendar');
@@ -168,14 +169,14 @@ test('第一层：每轮注入当前与下一项', async (t) => {
   const generated = await (await request('/plugins/schedule/generate', { date, force: true })).json();
   assert.equal(generated.ok, true);
 
-  const ambient = await app.context.render({ sessionId: 'synthetic', personaId: 'whale', personaName: '周小迟', channel: 'web' });
-  assert.match(ambient, /周小迟的今日日程/);
+  const ambient = await app.context.render({ sessionId: 'synthetic', personaId: 'main', personaName: '测试人格', channel: 'web' });
+  assert.match(ambient, /今天的日程/);
   assert.match(ambient, /正在：|现在没有正在进行的安排/);
   assert.match(ambient, /下一项：/);
   assert.match(ambient, /不用再调 schedule_now/);
 
   const other = await app.context.render({ sessionId: 'synthetic', personaId: 'other', personaName: '别人', channel: 'web' });
-  assert.equal(other, '', '只给迟宝注入，不打扰其他人格');
+  assert.match(other, /今天的日程/, '其他人格也能读到同一份日程');
 
   const calls: any[] = [];
   app.llm.chat = async (input: any) => {
@@ -183,9 +184,9 @@ test('第一层：每轮注入当前与下一项', async (t) => {
     return { text: '嗯', toolCalls: [], usage: { prompt_tokens: 10, completion_tokens: 1 } };
   };
   const sessionId = await app.sessions.create('上下文测试');
-  await app.sessions.chat(sessionId, '现在在干嘛', () => {}, undefined, 'whale');
+  await app.sessions.chat(sessionId, '现在在干嘛', () => {}, undefined, 'main');
   const systemText = calls[0].messages.filter((message: any) => message.role === 'system').map((message: any) => message.content).join('\n');
-  assert.match(systemText, /周小迟的今日日程/);
+  assert.match(systemText, /今天的日程/);
   assert.match(systemText, /正在：|现在没有正在进行的安排/);
 });
 

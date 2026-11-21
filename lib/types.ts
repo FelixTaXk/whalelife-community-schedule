@@ -84,10 +84,12 @@ export type HolidayPeriod = {
 
 export type HolidayConfig = {
   enabled: boolean;
-  /** 内置 2026–2027 国务院法定节假日和调休上班日。 */
+  /** 内置中国 2026–2027 法定节假日和调休上班日；默认关闭，其他地区用自定义假期。 */
   builtin: boolean;
   /** 只有打开后，kind=student 的自定义假期才生效。 */
   student: boolean;
+  /** 哪几天算周末，1 = 周一 … 7 = 周日；默认周六、周日。 */
+  weekendDays?: number[];
   periods: HolidayPeriod[];
   /** 额外的调休上班日，YYYY-MM-DD。 */
   workdays: string[];
@@ -199,9 +201,9 @@ export const NOTES = [
   '按自己的节奏来，不用赶。',
   '今天给自己留一点空。',
   '事情排得松，慢慢做。',
-  '想画就画，不想画就歇会儿。',
-  '记得吃点甜的。',
-  '晚上早点收笔。',
+  '想休息就休息，不用硬撑。',
+  '记得吃点喜欢的。',
+  '晚上早点收尾。',
 ] as const;
 
 const STUDENT_ROUTINE: Routine = {
@@ -216,7 +218,7 @@ const STUDENT_ROUTINE: Routine = {
   dinner: { enabled: true, start: '18:30', minutes: 40 },
   exercise: { enabled: false, title: '散步', days: [1, 3, 5], start: '19:30', minutes: 40 },
   fixed: [],
-  hobbies: ['画速写', '修照片', '看剧', '听歌', '翻手账', '出去走走'],
+  hobbies: ['复习', '看剧', '听歌', '运动', '出去走走', '做点手工'],
 };
 
 const OFFICE_ROUTINE: Routine = {
@@ -252,8 +254,8 @@ const FREELANCE_ROUTINE: Routine = {
 export type Preset = { id: string; name: string; hint: string; routine: Routine };
 
 export const PRESETS: readonly Preset[] = [
-  { id: 'student', name: '上学（默认）', hint: '白天上课、晚上画画到十二点多', routine: STUDENT_ROUTINE },
-  { id: 'office', name: '上班', hint: '朝九晚六，通勤 40 分钟', routine: OFFICE_ROUTINE },
+  { id: 'office', name: '上班（默认）', hint: '朝九晚六，通勤 40 分钟', routine: OFFICE_ROUTINE },
+  { id: 'student', name: '上学', hint: '白天上课，晚上按自己的节奏安排', routine: STUDENT_ROUTINE },
   { id: 'freelance', name: '自由职业', hint: '在家干活，时间自己排', routine: FREELANCE_ROUTINE },
 ];
 
@@ -270,14 +272,14 @@ export function defaultConfig(): Config {
       channel: 'qq',
       account: '',
       peer: '',
-      persona: 'whale',
+      persona: '',
       leadMinutes: 10,
       maxPerDay: 6,
       quietStart: '23:30',
       quietEnd: '06:30',
       usePersona: true,
     },
-    holiday: { enabled: true, builtin: true, student: false, periods: [], workdays: [] },
+    holiday: { enabled: true, builtin: false, student: false, weekendDays: [6, 7], periods: [], workdays: [] },
     travel: {
       enabled: false,
       weekend: true,
@@ -291,7 +293,7 @@ export function defaultConfig(): Config {
       style: '',
       spots: [],
     },
-    routine: cloneRoutine(STUDENT_ROUTINE),
+    routine: cloneRoutine(OFFICE_ROUTINE),
   };
 }
 
@@ -396,14 +398,22 @@ function normalizeWorkdays(value: unknown): string[] {
 }
 
 function normalizeHolidayConfig(value: unknown, fallback: HolidayConfig): HolidayConfig {
+  const defaultWeekend = fallback.weekendDays?.length ? fallback.weekendDays : [6, 7];
   if (!value || typeof value !== 'object') {
-    return { ...fallback, periods: [...fallback.periods], workdays: [...fallback.workdays] };
+    return {
+      ...fallback,
+      weekendDays: [...defaultWeekend],
+      periods: [...fallback.periods],
+      workdays: [...fallback.workdays],
+    };
   }
   const raw = value as Record<string, any>;
+  const weekendDays = normalizeDays(raw.weekendDays, defaultWeekend);
   return {
     enabled: bool(raw.enabled, fallback.enabled),
     builtin: bool(raw.builtin, fallback.builtin),
     student: bool(raw.student, fallback.student),
+    weekendDays: weekendDays.length ? weekendDays : [...defaultWeekend],
     periods: normalizeHolidayPeriods(raw.periods),
     workdays: normalizeWorkdays(raw.workdays),
   };
@@ -517,7 +527,7 @@ export function normalizeConfig(value: unknown, fallback: Config = defaultConfig
       channel: text(reminder.channel, 40) || fallback.reminder.channel,
       account: text(reminder.account, 40),
       peer: text(reminder.peer, 80),
-      persona: text(reminder.persona, 40) || fallback.reminder.persona,
+      persona: reminder.persona === undefined ? fallback.reminder.persona : text(reminder.persona, 40),
       leadMinutes: integer(reminder.leadMinutes, fallback.reminder.leadMinutes, 0, 60),
       maxPerDay: integer(reminder.maxPerDay, fallback.reminder.maxPerDay, 1, 20),
       quietStart: time(reminder.quietStart, fallback.reminder.quietStart),

@@ -42,9 +42,17 @@ function dayDiff(from: string, to: string): number {
   return Math.round((parseDateKey(to).getTime() - parseDateKey(from).getTime()) / 86_400_000);
 }
 
-function weekendStart(date: string): string {
+function weekendStart(date: string, weekendDays: number[] = [6, 7]): string {
   const weekday = parseDateKey(date).getDay() || 7;
-  return addDays(date, -(weekday - 6));
+  const days = weekendDays.length ? weekendDays : [6, 7];
+  if (!days.includes(weekday)) return date;
+  let start = weekday;
+  for (let i = 0; i < 6; i += 1) {
+    const previous = ((start + 5) % 7) + 1;
+    if (!days.includes(previous)) break;
+    start = previous;
+  }
+  return addDays(date, -((weekday - start + 7) % 7));
 }
 
 function weekIndex(date: string): number {
@@ -117,7 +125,7 @@ function tripWindow(info: DayInfo, mode: TravelMode, spot: TravelSpot, holiday: 
     return { start: addDays(holiday.start, offset), end: addDays(holiday.start, offset + span - 1) };
   }
   if (mode !== 'weekend') return null;
-  const saturday = weekendStart(info.date);
+  const saturday = weekendStart(info.date, info.weekendDays);
   if (spot.from && spot.to) {
     return saturday >= spot.from && saturday <= spot.to ? { start: saturday, end: saturday } : null;
   }
@@ -125,7 +133,7 @@ function tripWindow(info: DayInfo, mode: TravelMode, spot: TravelSpot, holiday: 
 }
 
 export function travelKey(info: DayInfo, date: string): string {
-  return info.holiday ? `holiday:${info.holiday.key}` : `weekend:${weekendStart(date)}`;
+  return info.holiday ? `holiday:${info.holiday.key}` : `weekend:${weekendStart(date, info.weekendDays)}`;
 }
 
 export function resolveTravel(

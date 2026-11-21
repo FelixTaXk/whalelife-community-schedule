@@ -18,9 +18,9 @@ export const DEFAULT_GEOCODING = 'https://geocoding-api.open-meteo.com';
 export function defaultConfig(): WeatherConfig {
   return {
     version: 1,
-    city: '常州',
-    latitude: 31.77359,
-    longitude: 119.95401,
+    city: '',
+    latitude: null,
+    longitude: null,
     refreshMinutes: 30,
     forecastDays: 7,
     timeoutSeconds: 8,

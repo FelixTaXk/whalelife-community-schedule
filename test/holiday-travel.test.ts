@@ -11,6 +11,7 @@ import { ScheduleService } from '../lib/service.ts';
 
 function configWithTravel() {
   const config = defaultConfig();
+  config.holiday.builtin = true;
   config.travel = {
     ...config.travel,
     enabled: true,
@@ -18,15 +19,26 @@ function configWithTravel() {
     shortHoliday: true,
     longHoliday: true,
     spots: [
-      { name: '常州恐龙园', distance: 'near', minDays: 1, maxDays: 1, from: '', to: '', note: '周六一日游' },
-      { name: '杭州', distance: 'far', minDays: 3, maxDays: 5, from: '', to: '', note: '西湖' },
+      { name: '城郊公园', distance: 'near', minDays: 1, maxDays: 1, from: '', to: '', note: '周六一日游' },
+      { name: '远方城市', distance: 'far', minDays: 3, maxDays: 5, from: '', to: '', note: '测试备注' },
     ],
   };
   return config;
 }
 
+test('周末日可配置：不再写死周六日', () => {
+  const config = defaultConfig();
+  config.holiday.weekendDays = [5, 6];
+  const friday = resolveDayInfo(config.holiday, '2026-11-20', 5);
+  const sunday = resolveDayInfo(config.holiday, '2026-11-22', 7);
+  assert.equal(friday.weekend, true);
+  assert.equal(sunday.weekend, false);
+  assert.deepEqual(friday.weekendDays, [5, 6]);
+});
+
 test('内置法定节假日：春节长假、国庆长假和调休上班日', () => {
   const config = defaultConfig();
+  config.holiday.builtin = true;
   const spring = resolveDayInfo(config.holiday, '2026-02-16', 1);
   assert.equal(spring.holiday?.name, '春节');
   assert.equal(spring.holiday?.scale, 'long');
@@ -88,7 +100,7 @@ test('旅行：周末选近处、国庆选远途、指定目的地优先、调�
   const config = configWithTravel();
   const weekend = resolveDayInfo(config.holiday, '2027-06-05', 6);
   const short = resolveTravel(config.travel, weekend, '2027-06-05');
-  assert.equal(short?.destination, '常州恐龙园');
+  assert.equal(short?.destination, '城郊公园');
   assert.equal(short?.days, 1);
   assert.equal(short?.dayIndex, 0);
   assert.equal(short?.start, '09:00');
@@ -96,7 +108,7 @@ test('旅行：周末选近处、国庆选远途、指定目的地优先、调�
 
   const national = resolveDayInfo(config.holiday, '2027-10-02', 6);
   const long = resolveTravel(config.travel, national, '2027-10-02');
-  assert.equal(long?.destination, '杭州');
+  assert.equal(long?.destination, '远方城市');
   assert.ok((long?.days ?? 0) >= 3);
   assert.equal(long?.startDate, '2027-10-02');
 
@@ -122,7 +134,7 @@ test('周末也要上班时，正事优先于旅行；假期不上班时保留�
   config.holiday.builtin = true;
   const holiday = generatePlan(config, '2027-10-02');
   assert.equal(holiday.items.some((item) => item.kind === 'work' || item.kind === 'study'), false);
-  assert.equal(holiday.travel?.destination, '杭州');
+  assert.equal(holiday.travel?.destination, '远方城市');
   assert.ok(holiday.items.some((item) => item.kind === 'travel'));
 });
 
@@ -141,9 +153,9 @@ test('旅行候选按可用天数过滤：一日游不会选三天目的地，�
   assert.equal(plan.items.some((item) => item.kind === 'travel'), false);
 
   config.travel.spots.push(
-    { name: '常州恐龙园', distance: 'near', minDays: 1, maxDays: 1, from: '', to: '', note: '周六一日游' },
+    { name: '城郊公园', distance: 'near', minDays: 1, maxDays: 1, from: '', to: '', note: '周六一日游' },
   );
-  assert.equal(resolveTravel(config.travel, saturday, '2026-11-28')?.destination, '常州恐龙园');
+  assert.equal(resolveTravel(config.travel, saturday, '2026-11-28')?.destination, '城郊公园');
 });
 
 test('旅行日跳过常规运动，普通非旅行日保留运动', () => {
@@ -160,7 +172,7 @@ test('旅行日跳过常规运动，普通非旅行日保留运动', () => {
   assert.equal(shortLastDay.items.some((item) => item.kind === 'exercise'), false, '短假旅行日不排常规运动');
 
   config.travel.spots = [
-    { name: '杭州', distance: 'far', minDays: 3, maxDays: 6, from: '', to: '', note: '西湖' },
+    { name: '远方城市', distance: 'far', minDays: 3, maxDays: 6, from: '', to: '', note: '测试备注' },
   ];
   const longLastDay = generatePlan(config, '2027-10-07');
   assert.ok(longLastDay.items.some((item) => item.kind === 'travel'), '国庆最后一天仍有旅行');
@@ -169,20 +181,20 @@ test('旅行日跳过常规运动，普通非旅行日保留运动', () => {
   config.travel.enabled = false;
   const ordinary = generatePlan(config, '2026-11-28');
   assert.equal(ordinary.travel, undefined);
-  assert.ok(ordinary.items.some((item) => item.kind === 'exercise' && item.start === '19:30'),
+  assert.ok(ordinary.items.some((item) => item.kind === 'exercise' && item.title === '散步'),
     '非旅行日仍保留散步');
 });
 
 test('AI 旅行选择：只接受地点池里的地点和天数范围内', () => {
   const spots = [
-    { name: '杭州', distance: 'far' as const, minDays: 3, maxDays: 5, from: '', to: '', note: '西湖' },
-    { name: '苏州', distance: 'near' as const, minDays: 1, maxDays: 1, from: '', to: '', note: '园林' },
+    { name: '远方城市', distance: 'far' as const, minDays: 3, maxDays: 5, from: '', to: '', note: '测试备注' },
+    { name: '邻市', distance: 'near' as const, minDays: 1, maxDays: 1, from: '', to: '', note: '园林' },
   ];
-  assert.deepEqual(parseTravelChoice('{"spot":"杭州","days":4,"reason":"西湖"}', spots), {
-    spot: '杭州', days: 4, reason: '西湖',
+  assert.deepEqual(parseTravelChoice('{"spot":"远方城市","days":4,"reason":"测试备注"}', spots), {
+    spot: '远方城市', days: 4, reason: '测试备注',
   });
   assert.equal(parseTravelChoice('{"spot":"北京","days":3}', spots), null, '候选外的地点会被拒绝');
-  assert.equal(parseTravelChoice('{"spot":"杭州","days":8}', spots)?.days, 5, '天数夹到地点上限');
+  assert.equal(parseTravelChoice('{"spot":"远方城市","days":8}', spots)?.days, 5, '天数夹到地点上限');
 });
 
 test('服务：AI 选目的地后缓存，假期多天只选一次', async () => {
@@ -194,7 +206,7 @@ test('服务：AI 选目的地后缓存，假期多天只选一次', async () =>
       travel: {
         enabled: true, weekend: true, shortHoliday: true, longHoliday: true, weekendEvery: 1, aiChoose: true,
         spots: [
-          { name: '杭州', distance: 'far', minDays: 3, maxDays: 5, from: '', to: '', note: '西湖' },
+          { name: '远方城市', distance: 'far', minDays: 3, maxDays: 5, from: '', to: '', note: '测试备注' },
           { name: '成都', distance: 'far', minDays: 4, maxDays: 5, from: '', to: '', note: '火锅' },
         ],
       },
@@ -213,17 +225,17 @@ test('服务：AI 选目的地后缓存，假期多天只选一次', async () =>
     llm: {
       chat: async () => {
         calls += 1;
-        return { text: '{"spot":"杭州","days":4,"reason":"西湖"}', toolCalls: [], usage: {} };
+        return { text: '{"spot":"远方城市","days":4,"reason":"测试备注"}', toolCalls: [], usage: {} };
       },
     },
   } as any;
   const service = await ScheduleService.create(ctx);
   const first = await service.ensure('2027-10-02');
-  assert.equal(first.travel?.destination, '杭州');
+  assert.equal(first.travel?.destination, '远方城市');
   assert.equal(first.travel?.days, 4);
   assert.equal(calls, 1);
   const second = await service.ensure('2027-10-03');
-  assert.equal(second.travel?.destination, '杭州');
+  assert.equal(second.travel?.destination, '远方城市');
   assert.equal(calls, 1, '同一假期第二天复用缓存，不再调模型');
 });
 
@@ -233,7 +245,7 @@ test('假期/地点文本可保存和回读', () => {
   assert.equal(holiday.periods[0].scale, 'long');
   assert.equal(holiday.periods[1].scale, 'long');
 
-  const travel = parseTravelText('常州恐龙园 | 近 | 1 | 1 | | 周六一日游\n杭州 | 远 | 3 | 5 | 2027-10-01~2027-10-05 | 西湖');
+  const travel = parseTravelText('城郊公园 | 近 | 1 | 1 | | 周六一日游\n远方城市 | 远 | 3 | 5 | 2027-10-01~2027-10-05 | 测试备注');
   assert.equal(travel.spots.length, 2);
   assert.equal(travel.spots[0].distance, 'near');
   assert.equal(travel.spots[1].from, '2027-10-01');

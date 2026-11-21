@@ -175,7 +175,7 @@ function renderDay(){
   }).join('');
   el.innerHTML=head+'<ul class="timeline">'+list+'</ul>'
     +'<div class="adday"><input type="time" id="fStart" value="09:00"><input type="time" id="fEnd" value="10:00">'
-    +'<input type="text" id="fTitle" maxlength="24" placeholder="加一件事，例如 修照片">'
+    +'<input type="text" id="fTitle" maxlength="24" placeholder="加一件事，例如 取快递">'
     +'<button type="button" class="primary" data-act="add">加上</button></div>';
   bindDay();
 }

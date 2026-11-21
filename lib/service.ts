@@ -204,7 +204,7 @@ export class ScheduleService {
       return `${item.start}–${item.end} ${title}${place ? `（${place}）` : ''}`;
     };
     const lines = [
-      `【周小迟的今日日程 · ${today} · 现在 ${formatHHMM(minute)}】`,
+      `【今天的日程 · ${today} · 现在 ${formatHHMM(minute)}】`,
       active ? `正在：${label(active)}，到 ${active.end} 结束。` : `现在没有正在进行的安排。`,
       next ? `下一项：${label(next)}。` : '下一项：今天没有后续安排了。',
     ];

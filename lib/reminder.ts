@@ -283,14 +283,14 @@ export class ReminderService {
     const result = typeof this.ctx.sessions.enqueueTransient === 'function'
       ? await this.ctx.sessions.enqueueTransient({
           sessionId: session,
-          persona: this.config.persona || 'whale',
+          persona: this.config.persona || undefined,
           permission: 'off',
           text: prompt,
           signal,
         })
       : await this.ctx.sessions.runTransient({
           sessionId: session,
-          persona: this.config.persona || 'whale',
+          persona: this.config.persona || undefined,
           permission: 'off',
           text: prompt,
           signal,

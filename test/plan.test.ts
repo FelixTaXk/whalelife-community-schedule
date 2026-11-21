@@ -8,9 +8,11 @@ import { defaultConfig, normalizeConfig, normalizeRoutine, parseFixedText, PRESE
 import { ScheduleService } from '../lib/service.ts';
 import { parseHHMM, formatHHMM } from '../lib/time.ts';
 
-function configFromPreset(index: number) {
+function configFromPreset(id: 'office' | 'student' | 'freelance') {
+  const preset = PRESETS.find((entry) => entry.id === id);
+  assert.ok(preset, `缺少模板 ${id}`);
   const config = defaultConfig();
-  config.routine = PRESETS[index].routine;
+  config.routine = preset.routine;
   return config;
 }
 
@@ -23,7 +25,7 @@ function assertNoOverlap(items: Array<{ start: string; end: string }>) {
 }
 
 test('上班模板：午饭切开正事，日程不重叠且铺满白天', () => {
-  const config = configFromPreset(1);
+  const config = configFromPreset('office');
   const plan = generatePlan(config, '2026-11-20');
   assert.ok(plan.items.length > 6);
   assertNoOverlap(plan.items);
@@ -40,7 +42,7 @@ test('上班模板：午饭切开正事，日程不重叠且铺满白天', () =>
 });
 
 test('上学模板：睡觉跨零点时给出次日时间，末尾到 24:00', () => {
-  const config = configFromPreset(0);
+  const config = configFromPreset('student');
   const plan = generatePlan(config, '2026-11-20');
   assert.match(plan.sleepAt ?? '', /（次日）/);
   assert.equal(plan.items[plan.items.length - 1].end, '24:00');
@@ -48,7 +50,7 @@ test('上学模板：睡觉跨零点时给出次日时间，末尾到 24:00', ()
 });
 
 test('固定安排优先：会切开正事且不被压掉', () => {
-  const config = configFromPreset(1);
+  const config = configFromPreset('office');
   config.routine.fixed = [{ title: '例会', days: [1, 2, 3, 4, 5, 6, 7], start: '15:00', minutes: 60, place: '会议室' }];
   const plan = generatePlan(config, '2026-11-20');
   assertNoOverlap(plan.items);
@@ -59,7 +61,7 @@ test('固定安排优先：会切开正事且不被压掉', () => {
 });
 
 test('早于起床的固定安排只裁掉起床前的部分', () => {
-  const config = configFromPreset(1);
+  const config = configFromPreset('office');
   config.routine.fixed = [{ title: '早课', days: [1, 2, 3, 4, 5, 6, 7], start: '05:00', minutes: 240, place: '' }];
   const plan = generatePlan(config, '2026-11-21');
   const item = plan.items.find((entry) => entry.title === '早课');
@@ -69,7 +71,7 @@ test('早于起床的固定安排只裁掉起床前的部分', () => {
 });
 
 test('同日同配置稳定，不同日期不同', () => {
-  const config = configFromPreset(2);
+  const config = configFromPreset('freelance');
   const first = JSON.stringify(generatePlan(config, '2026-11-21').items);
   const again = JSON.stringify(generatePlan(config, '2026-11-21').items);
   const other = JSON.stringify(generatePlan(config, '2026-11-22').items);
@@ -78,7 +80,7 @@ test('同日同配置稳定，不同日期不同', () => {
 });
 
 test('空档识别：自动自由段连续合并', () => {
-  const config = configFromPreset(1);
+  const config = configFromPreset('office');
   const plan = generatePlan(config, '2026-11-21');
   const gaps = autoGaps(plan);
   assert.ok(gaps.length >= 1);
