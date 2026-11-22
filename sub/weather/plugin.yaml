@@ -1,6 +1,6 @@
 id: weather
 name: 天气
 version: 0.2.0
-description: 通过 Open-Meteo 获取实时天气与未来 7 天预报，供日程页显示，也提供 weather_now / weather_forecast 工具；取到的快照会落盘，重启或接口超时也能继续用上次预报。
+description: 日程内置的天气子插件：通过 Open-Meteo 获取实时天气与未来 7 天预报，供日程页显示，也提供 weather_now / weather_forecast 工具；取到的快照会落盘，重启或接口超时也能继续用上次预报。
 apiVersion: "1.0.0"
 depends: [tools, web]

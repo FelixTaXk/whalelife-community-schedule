@@ -1,7 +1,7 @@
 id: schedule
 name: 日程
-version: 0.8.1
-description: 按作息生成每日日程：待办、分级提醒、ICS、旅行、天气与可选人格日记；可把刷 B 站/抖音排进自由时间（需网上冲浪及对应子插件）。
+version: 0.8.2
+description: 按作息生成每日日程，内置天气与衣柜，含待办、分级提醒、ICS、旅行和可选人格日记；可把刷 B 站/抖音排进自由时间（需网上冲浪）。
 apiVersion: "1.0.0"
 depends: [tools, web, llm, models]
 sub: [weather, wardrobe]

@@ -1,6 +1,6 @@
 id: wardrobe
 name: 衣柜
 version: 0.5.1
-description: 日程的独立子插件：按日程、天气和季节给当前人格配穿搭，支持锁定当天、备选、喜欢/不喜欢/屏蔽、多日打包、画室参考图和混搭提示词。自带演示服装库，也可在设置页导入自己的库或填 CDN；分类→季节/分级/场景、性别、显式年龄和成年线都可配置，不读取宿主私有配置或人格正文。提供 wardrobe_today / wardrobe_now / wardrobe_for / wardrobe_pick / wardrobe_wear / wardrobe_alternatives / wardrobe_lock / wardrobe_feedback / wardrobe_pack / wardrobe_ref / wardrobe_combine 工具和设置页。
+description: 日程内置的衣柜子插件：按日程、天气和季节给当前人格配穿搭，支持锁定当天、备选、喜欢/不喜欢/屏蔽、多日打包、画室参考图和混搭提示词。自带演示服装库，也可在设置页导入自己的库或填 CDN；分类→季节/分级/场景、性别、显式年龄和成年线都可配置，不读取宿主私有配置或人格正文。提供 wardrobe_today / wardrobe_now / wardrobe_for / wardrobe_pick / wardrobe_wear / wardrobe_alternatives / wardrobe_lock / wardrobe_feedback / wardrobe_pack / wardrobe_ref / wardrobe_combine 工具和设置页。
 apiVersion: "1.0.0"
 depends: [tools, web]
