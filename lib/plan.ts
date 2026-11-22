@@ -4,6 +4,9 @@ import { createHash } from 'node:crypto';
 import type { BlockKind, Config, Plan, PlanItem, Routine } from './types.ts';
 import { NOTES, TONES } from './types.ts';
 import { resolveDayInfo } from './holidays.ts';
+import type { ExceptionDay } from './exceptions.ts';
+import { exceptionKey, exceptionLabel } from './exceptions.ts';
+import { occursOn } from './recurrence.ts';
 import { resolveTravel, type TravelOverride } from './travel.ts';
 import {
   MINUTES_PER_DAY, formatHHMM, hashSeed, isoWeekday, parseDateKey, parseHHMM, pick, weekdayLabel,
@@ -108,7 +111,7 @@ function freePiece(index: number, seedText: string): { title: string; kind: Bloc
 }
 
 /** 生成一天的日程骨架；空档已用自由安排铺好。 */
-export function generatePlan(config: Config, date: string, travelOverride?: TravelOverride | null): Plan {
+export function generatePlan(config: Config, date: string, travelOverride?: TravelOverride | null, exception?: ExceptionDay | null): Plan {
   const routine = config.routine;
   const weekday = isoWeekday(parseDateKey(date));
   const info = resolveDayInfo(config.holiday, date, weekday);
@@ -141,7 +144,7 @@ export function generatePlan(config: Config, date: string, travelOverride?: Trav
     anchor(wakeEnd, wakeEnd + routine.breakfastMinutes, '早餐', 'meal', PRIORITY.meal, { place: '家' });
   }
 
-  if (routine.work.enabled && (info.workday || (routine.work.days.includes(weekday) && !info.rest))) {
+  if (routine.work.enabled && (info.workday || (occursOn(routine.work.days, routine.work.repeat ?? '', date, weekday) && !info.rest))) {
     const start = parseHHMM(routine.work.start);
     const end = parseHHMM(routine.work.end);
     if (start !== null && end !== null && end - start >= 30) {
@@ -164,12 +167,12 @@ export function generatePlan(config: Config, date: string, travelOverride?: Trav
     const start = parseHHMM(routine.dinner.start);
     if (start !== null) anchor(start, start + routine.dinner.minutes, '晚饭', 'meal', PRIORITY.meal, { place: '家' });
   }
-  if (routine.exercise.enabled && routine.exercise.days.includes(weekday)) {
+  if (routine.exercise.enabled && occursOn(routine.exercise.days, routine.exercise.repeat ?? '', date, weekday)) {
     const start = parseHHMM(routine.exercise.start);
     if (start !== null) anchor(start, start + routine.exercise.minutes, routine.exercise.title, 'exercise', PRIORITY.exercise);
   }
   for (const item of routine.fixed) {
-    if (!item.days.includes(weekday)) continue;
+    if (!occursOn(item.days, item.repeat ?? '', date, weekday)) continue;
     const start = parseHHMM(item.start);
     if (start === null) continue;
     anchor(start, start + item.minutes, item.title, 'fixed', PRIORITY.fixed, { place: item.place });
@@ -210,12 +213,13 @@ export function generatePlan(config: Config, date: string, travelOverride?: Trav
   if (sleepCap > cursor) gaps.push({ start: cursor, end: sleepCap });
 
   let freeIndex = 0;
+  const restful = Boolean(exception && (exception.kind === 'sick' || exception.kind === 'half' || exception.kind === 'rest'));
   for (const gap of gaps) {
     const length = gap.end - gap.start;
     if (length < 30) continue;
     let start = gap.start;
     for (const size of chunks(length)) {
-      const piece = freePiece(freeIndex, `${date}|${routineHash(routine)}`);
+      const piece = restful ? { title: '休息', kind: 'rest' as BlockKind } : freePiece(freeIndex, `${date}|${routineHash(routine)}`);
       const title = piece.title || `自由 · ${routine.hobbies[freeIndex % routine.hobbies.length]}`;
       placed.push({
         start,
@@ -280,6 +284,15 @@ export function generatePlan(config: Config, date: string, travelOverride?: Trav
         days: travel.days,
         source: travel.source,
       },
+    } : {}),
+    ...(exception ? {
+      exception: {
+        kind: exception.kind,
+        label: exceptionLabel(exception.kind),
+        note: exception.note,
+        createdAt: exception.createdAt,
+      },
+      exceptionKey: exceptionKey(exception),
     } : {}),
   };
 }

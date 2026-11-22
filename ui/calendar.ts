@@ -40,6 +40,27 @@ export function calendarPage(data: CalendarData): string {
 .adday{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:16px;padding-top:16px;border-top:1px dashed var(--line)}
 .adday input{width:auto;flex:1 1 110px}
 .empty{padding:26px 4px;color:var(--muted);font-size:14px}
+.review{margin-top:14px}
+.rvhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.rvhead h2{margin:0}
+.rvhead span{font-size:12px;color:var(--muted)}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}
+.stat{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.stat b{display:block;font-size:20px;line-height:1.2;font-variant-numeric:tabular-nums}
+.stat span{font-size:11px;color:var(--muted)}
+.rvbars{display:flex;gap:6px;align-items:flex-end;margin-top:12px;height:70px}
+.rvbar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;height:100%}
+.rvbar .fill{width:100%;max-width:26px;background:var(--accent-soft);border-radius:4px 4px 0 0;min-height:2px;position:relative}
+.rvbar .fill i{position:absolute;left:0;bottom:0;width:100%;background:var(--accent);border-radius:4px 4px 0 0;display:block}
+.rvbar small{font-size:10px;color:var(--muted)}
+.rvbar em{font-size:10px;color:var(--muted);font-style:normal}
+.rvcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.rvcol{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
+.rvcol b{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-bottom:4px}
+.rvcol p{margin:2px 0}
+.exbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
+.exbar span{font-size:12px;color:var(--muted)}
+@media(max-width:560px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.rvcols{grid-template-columns:1fr}}
 </style></head><body><main>
 <header>
   <div><h1>日程</h1><p class="sub" id="sub">v${escapeHtml(data.version)} · 按作息自动排</p></div>
@@ -52,11 +73,12 @@ export function calendarPage(data: CalendarData): string {
 </header>
 <div id="banner"></div>
 <div class="tabs" id="tabs"></div>
+<section class="card review" id="review"></section>
 <section class="card" id="day"></section>
 </main>
 <script>
 var API='/plugins/schedule/';
-var state={today:${JSON.stringify(data.today)},weekStart:${JSON.stringify(initialWeek)},selected:${JSON.stringify(data.today)},plans:{},editing:null,config:null,status:null,weather:null,busy:false};
+var state={today:${JSON.stringify(data.today)},weekStart:${JSON.stringify(initialWeek)},selected:${JSON.stringify(data.today)},plans:{},exceptions:{},review:null,editing:null,config:null,status:null,weather:null,busy:false};
 var COLORS={routine:'#8fa5a3',meal:'#d78b4a',commute:'#5b8bb8',work:'#17906f',study:'#2f8f8f',exercise:'#c25b5b',free:'#7a6fbf',chore:'#9a7d55',rest:'#6f8f9a',social:'#b0709a',fixed:'#b39431',travel:'#c07a3e',sleep:'#3f4f55'};
 var KIND={routine:'日常',meal:'用餐',commute:'路上',work:'正事',study:'学习',exercise:'运动',free:'自由',chore:'家务',rest:'休息',social:'社交',fixed:'固定',travel:'旅行',sleep:'睡觉'};
 var WEEK=['一','二','三','四','五','六','日'];
@@ -78,14 +100,47 @@ async function load(){
   try{
     var r=await post('data',{from:state.weekStart,days:7});
     state.plans={};r.plans.forEach(function(entry){if(entry.plan)state.plans[entry.date]=entry.plan});
+    state.exceptions={};(r.exceptions||[]).forEach(function(ex){state.exceptions[ex.date]=ex});
     state.config=r.config;state.status=r.status;state.today=r.today||state.today;state.weather=r.weather||null;
+    try{state.review=await post('review',{date:state.selected})}catch(e){state.review=null}
     render();
   }catch(e){document.getElementById('banner').innerHTML='<div class="alert bad">读取失败：'+esc(e.message)+'</div>'}
   finally{state.busy=false}
 }
 function render(){
   document.getElementById('sub').textContent='v'+${JSON.stringify(data.version)}+' · '+dayTitle(state.today)+' · 按作息自动排';
-  renderBanner();renderTabs();renderDay();
+  renderBanner();renderTabs();renderReview();renderDay();
+}
+function hours(minutes){return (Math.round(minutes/6)/10).toFixed(1)}
+function delta(v,unit){var n=Number(v)||0;return (n>0?'+':'')+n+(unit||'')}
+function renderReview(){
+  var el=document.getElementById('review'),rv=state.review;
+  if(!rv||!rv.current){el.innerHTML='';return}
+  var c=rv.current,p=rv.previous;
+  var head='<div class="rvhead"><h2>周复盘</h2><span>'+esc(c.label)+'</span></div>';
+  if(!c.daysWithPlan){
+    el.innerHTML=head+'<div class="empty">这周还没有落盘的日程，先让插件跑几天再来复盘。</div>';return;
+  }
+  var cmp=p.total?('比上周 '+delta(rv.rateDelta,'%')+' · 多完成 '+delta(rv.doneDelta,' 项')):'上周没有记录，从这周开始攒趋势';
+  var html=head+'<div class="stats">'
+    +'<div class="stat"><b>'+c.rate+'%</b><span>完成率 · '+cmp+'</span></div>'
+    +'<div class="stat"><b>'+c.done+'/'+c.total+'</b><span>完成 / 计划项</span></div>'
+    +'<div class="stat"><b>'+hours(c.doneMinutes)+'h</b><span>完成时长 · 计划 '+hours(c.plannedMinutes)+'h</span></div>'
+    +'<div class="stat"><b>'+c.exceptionDays+'</b><span>异常日 · 已处理 '+c.handledRate+'%</span></div>'
+    +'</div>';
+  var max=1;c.rows.forEach(function(row){if(row.total>max)max=row.total});
+  var bars=c.rows.map(function(row){
+    var h=row.total?Math.max(6,Math.round(row.total/max*52)):2;
+    return '<div class="rvbar"><em>'+row.done+'/'+row.total+'</em><div class="fill" style="height:'+h+'px"><i style="height:'+row.rate+'%"></i></div><small>'+row.weekday+'</small></div>';
+  }).join('');
+  var skip=c.skippedTop.length?c.skippedTop.map(function(entry){return '<p>'+esc(entry.title)+' × '+entry.count+'</p>'}).join(''):'<p class="muted">没有跳过记录</p>';
+  var sleep=c.sleepAverage?('<p>平均入睡 '+c.sleepAverage+'</p><p class="muted">最早 '+c.sleepEarliest+' · 最晚 '+c.sleepLatest+'</p>'):'<p class="muted">没有睡眠记录</p>';
+  var out='<p>旅行 '+c.travelDays+' 天 · 运动 '+c.exerciseDone+'/'+c.exercisePlanned+' 次</p>';
+  html+='<div class="rvbars">'+bars+'</div>'
+    +'<div class="rvcols"><div class="rvcol"><b>最常跳过</b>'+skip+'</div>'
+    +'<div class="rvcol"><b>睡眠趋势</b>'+sleep+'</div>'
+    +'<div class="rvcol"><b>旅行与运动</b>'+out+'</div></div>';
+  el.innerHTML=html;
 }
 function renderBanner(){
   var html='';
@@ -132,18 +187,27 @@ function nowLine(plan){
   if(next)return '现在 '+pad(d.getHours())+':'+pad(d.getMinutes())+' · 空着，下一项 '+next.start+'「'+next.title+'」';
   return '现在 '+pad(d.getHours())+':'+pad(d.getMinutes())+' · 今天的安排都结束了';
 }
+function exLabel(kind){return {sick:'生病',leave:'请假',overtime:'加班',half:'休息半天',rest:'休息'}[kind]||kind}
+function exBar(key,exception){
+  var html='<div class="exbar"><span>异常日模式</span>';
+  if(exception)html+='<span class="pill warn">'+esc(exLabel(exception.kind))+'</span><span>'+esc(exception.note||'')+'</span><button type="button" class="small" data-act="exClear">取消异常日</button>';
+  else ['sick','leave','overtime','half','rest'].forEach(function(kind){html+='<button type="button" class="small" data-act="exception" data-kind="'+kind+'">'+exLabel(kind)+'</button>'});
+  return html+'</div>';
+}
 function renderDay(){
-  var el=document.getElementById('day'),key=state.selected,plan=state.plans[key];
+  var el=document.getElementById('day'),key=state.selected,plan=state.plans[key],exception=state.exceptions[key];
   if(!plan){
-    el.innerHTML='<h2>'+esc(dayTitle(key))+'</h2>'+weatherBar(key)+'<div class="empty">这天还没有日程。</div><div class="row"><button type="button" data-act="generate">按作息生成这天</button></div>';
+    el.innerHTML='<h2>'+esc(dayTitle(key))+(exception?'<span class="pill warn">异常日 · '+esc(exLabel(exception.kind))+'</span>':'')+'</h2>'+weatherBar(key)+'<div class="empty">这天还没有日程。</div>'+exBar(key,exception)+'<div class="row"><button type="button" data-act="generate">按作息生成这天</button></div>';
     bindDay();return;
   }
   var srcLabel=plan.source==='ai'?'模型润色':(plan.source==='manual'?'手动':'自动');
-  var head='<h2>'+esc(dayTitle(key))+' <span class="pill">'+esc(plan.tone)+'</span><span class="pill">'+srcLabel+'</span>'+(plan.edited?'<span class="pill warn">改过</span>':'')+(plan.date===state.today?'<span class="pill good">今天</span>':'')+'</h2>';
+  var head='<h2>'+esc(dayTitle(key))+' <span class="pill">'+esc(plan.tone)+'</span><span class="pill">'+srcLabel+'</span>'+(plan.edited?'<span class="pill warn">改过</span>':'')+(plan.date===state.today?'<span class="pill good">今天</span>':'')+(exception?'<span class="pill warn">异常日 · '+esc(exLabel(exception.kind))+'</span>':'')+'</h2>';
   if(plan.holiday)head+='<div class="row" style="margin:-6px 0 0"><span class="pill good">'+esc(plan.holiday.name)+' · 第 '+(plan.holiday.dayIndex+1)+'/'+plan.holiday.days+' 天</span>'+(plan.travel?'<span class="pill">旅行 · '+esc(plan.travel.destination)+'</span>':'')+'</div>';
   else if(plan.workday)head+='<div class="row" style="margin:-6px 0 0"><span class="pill warn">'+esc(plan.workday)+'</span></div>';
   else if(plan.travel)head+='<div class="row" style="margin:-6px 0 0"><span class="pill">周末短途 · '+esc(plan.travel.destination)+'</span></div>';
   if(plan.note)head+='<p class="muted" style="margin:-6px 0 0">'+esc(plan.note)+'</p>';
+  if(exception)head+='<p class="muted" style="margin:-6px 0 0">异常日：'+esc(exception.note||exLabel(exception.kind))+'。恢复常规排程点下面的「取消异常日」。</p>';
+  else if(plan.exception)head+='<p class="muted" style="margin:-6px 0 0">异常日：'+esc(plan.exception.note)+'。</p>';
   head+=weatherBar(key,plan);
   if(plan.weatherAdjusted&&plan.weatherAdjusted.length)head+='<div class="wxnote">按天气调整：'+esc(plan.weatherAdjusted.join('；'))+'</div>';
   var now=nowLine(plan);
@@ -173,7 +237,7 @@ function renderDay(){
       +'<div class="body"><b>'+esc(item.title)+'</b><span class="meta">'+esc(meta)+'</span>'+(item.note?'<span class="meta">'+esc(item.note)+'</span>':'')
       +(ops?'<span class="ops">'+ops+'</span>':'')+editor+'</div></li>';
   }).join('');
-  el.innerHTML=head+'<ul class="timeline">'+list+'</ul>'
+  el.innerHTML=head+'<ul class="timeline">'+list+'</ul>'+exBar(key,exception)
     +'<div class="adday"><input type="time" id="fStart" value="09:00"><input type="time" id="fEnd" value="10:00">'
     +'<input type="text" id="fTitle" maxlength="24" placeholder="加一件事，例如 取快递">'
     +'<button type="button" class="primary" data-act="add">加上</button></div>';
@@ -183,10 +247,10 @@ function nowMin(){var d=new Date();return d.getHours()*60+d.getMinutes()}
 function bindDay(){
   var el=document.getElementById('day');
   [].forEach.call(el.querySelectorAll('[data-act]'),function(button){
-    button.onclick=function(){act(button.getAttribute('data-act'),button.getAttribute('data-id'),button.getAttribute('data-status'))};
+    button.onclick=function(){act(button.getAttribute('data-act'),button.getAttribute('data-id'),button.getAttribute('data-status'),button.getAttribute('data-kind'))};
   });
 }
-async function act(name,id,status){
+async function act(name,id,status,kind){
   var key=state.selected;
   try{
     if(name==='generate'){
@@ -209,6 +273,14 @@ async function act(name,id,status){
       var s=document.getElementById('fStart').value,e=document.getElementById('fEnd').value,t=document.getElementById('fTitle').value;
       if(!t.trim()){alert('先写一下要加什么');return}
       await post('item',{date:key,action:'add',start:s,end:e,title:t});
+    }else if(name==='exception'){
+      var plan=state.plans[key];
+      if(plan&&plan.edited&&!confirm('这天有手动改过的地方，设为异常日会重排覆盖。继续？'))return;
+      if(!confirm('把这天设为「'+exLabel(kind)+'」并重排？长期作息不会改。'))return;
+      await post('exception',{date:key,action:'set',kind:kind});
+    }else if(name==='exClear'){
+      if(!confirm('取消异常日，恢复常规排程？'))return;
+      await post('exception',{date:key,action:'clear'});
     }
     await load();
   }catch(error){alert(error.message)}

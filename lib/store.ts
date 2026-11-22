@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import type { Context } from '../../../core/context.ts';
 import type { Plan } from './types.ts';
 import { isPlan } from './types.ts';
+import type { ExceptionDay } from './exceptions.ts';
+import { isException } from './exceptions.ts';
 import type { TravelChoice } from './travel.ts';
 import { addDays } from './time.ts';
 
@@ -62,6 +64,12 @@ export class Store {
       await this.remove(date);
       removed += 1;
     }
+    const exceptions = await this.exceptionMap();
+    const staleExceptions = Object.keys(exceptions).filter((date) => date < limit);
+    if (staleExceptions.length) {
+      for (const date of staleExceptions) delete exceptions[date];
+      await this.saveExceptionMap(exceptions);
+    }
     return removed;
   }
 
@@ -91,5 +99,44 @@ export class Store {
       version: 1,
       choices: { ...old, [choice.key]: choice },
     });
+  }
+
+  private async exceptionMap(): Promise<Record<string, ExceptionDay>> {
+    const raw = await this.ctx.config.read<unknown>('exceptions.json').catch(() => null);
+    if (!raw || typeof raw !== 'object') return {};
+    const days = (raw as Record<string, unknown>).days;
+    if (!days || typeof days !== 'object') return {};
+    const map: Record<string, ExceptionDay> = {};
+    for (const [date, value] of Object.entries(days as Record<string, unknown>)) {
+      if (isException(value) && value.date === date) map[date] = value;
+    }
+    return map;
+  }
+
+  private async saveExceptionMap(map: Record<string, ExceptionDay>): Promise<void> {
+    await this.ctx.config.save('exceptions.json', { version: 1, days: map });
+  }
+
+  async readException(date: string): Promise<ExceptionDay | null> {
+    return (await this.exceptionMap())[date] ?? null;
+  }
+
+  async writeException(exception: ExceptionDay): Promise<void> {
+    const map = await this.exceptionMap();
+    map[exception.date] = exception;
+    await this.saveExceptionMap(map);
+  }
+
+  async removeException(date: string): Promise<void> {
+    const map = await this.exceptionMap();
+    if (!map[date]) return;
+    delete map[date];
+    await this.saveExceptionMap(map);
+  }
+
+  async exceptions(from: string, to: string): Promise<ExceptionDay[]> {
+    return Object.values(await this.exceptionMap())
+      .filter((exception) => exception.date >= from && exception.date <= to)
+      .sort((left, right) => left.date.localeCompare(right.date));
   }
 }

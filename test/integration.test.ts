@@ -82,7 +82,7 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   const settings = await request('/plugins/schedule/settings');
   assert.equal(settings.status, 200);
   const settingsHtml = await settings.text();
-  assert.match(settingsHtml, /v0\.5\.2/, '设置页版本号应从 plugin.yaml 读取');
+  assert.match(settingsHtml, /v0\.6\.0/, '设置页版本号应从 plugin.yaml 读取');
   assert.match(settingsHtml, /日程/);
   assert.match(settingsHtml, /主动提醒/);
   assert.match(settingsHtml, /reminderEnabled/);
@@ -134,7 +134,7 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   assert.equal(saved.items[0].status, 'done');
 
   const toolNames = app.tools.list().map((tool: any) => tool.function.name).filter((name: string) => name.startsWith('schedule_'));
-  assert.deepEqual(toolNames.sort(), ['schedule_edit', 'schedule_generate', 'schedule_now', 'schedule_range', 'schedule_today']);
+  assert.deepEqual(toolNames.sort(), ['schedule_edit', 'schedule_exception', 'schedule_generate', 'schedule_now', 'schedule_range', 'schedule_today']);
   const todayText = String((await app.tools.call('schedule_today', {}, { permission: 'full' })).result);
   assert.match(todayText, /起床/);
   const nowText = String((await app.tools.call('schedule_now', {}, { permission: 'full' })).result);
@@ -222,6 +222,65 @@ test('主动提醒：设置页可保存目标，测试接口真的走 QQ 发送�
   assert.equal(sent[0].args.userId, '20002');
   assert.equal(sent[0].args.text, '测试主动提醒');
   assert.equal(sent[0].args.messageId.startsWith('schedule-reminder-test:'), true);
+});
+
+test('异常日：一键覆盖当天且可撤销，周复盘能读到', async (t) => {
+  const { app, request } = await fixture(t);
+  const date = '2026-11-23'; // 周一
+  const normal = await (await request('/plugins/schedule/generate', { date, force: true })).json();
+  assert.ok(normal.plan.items.some((item: any) => item.kind === 'work'), '正常工作日应有正事');
+  assert.ok(normal.plan.items.some((item: any) => item.kind === 'exercise'));
+
+  const sick = await (await request('/plugins/schedule/exception', { date, action: 'set', kind: 'sick', note: '感冒了' })).json();
+  assert.equal(sick.ok, true);
+  assert.equal(sick.exception.kind, 'sick');
+  assert.equal(sick.plan.exception.kind, 'sick');
+  assert.equal(sick.plan.exception.note, '感冒了');
+  assert.ok(!sick.plan.items.some((item: any) => item.kind === 'work'), '病假不排正事');
+  assert.ok(!sick.plan.items.some((item: any) => item.kind === 'exercise'), '病假不排运动');
+  assert.ok(!sick.plan.travel, '病假不排旅行');
+
+  const data = await (await request('/plugins/schedule/data', { from: date, days: 1 })).json();
+  assert.equal(data.exceptions.length, 1);
+  assert.equal(data.exceptions[0].kind, 'sick');
+
+  const review = await (await request('/plugins/schedule/review', { date })).json();
+  assert.equal(review.ok, true);
+  assert.equal(review.current.exceptionDays, 1);
+  assert.deepEqual(review.current.exceptions, [{ title: '生病', count: 1 }]);
+
+  const calendar = await (await request('/plugins/schedule/calendar')).text();
+  assert.match(calendar, /异常日模式/);
+  assert.match(calendar, /周复盘/);
+  assert.match(calendar, /最常跳过/);
+
+  const cleared = await (await request('/plugins/schedule/exception', { date, action: 'clear' })).json();
+  assert.equal(cleared.ok, true);
+  assert.equal(cleared.plan.exception, undefined);
+  assert.ok(cleared.plan.items.some((item: any) => item.kind === 'work'), '撤销后恢复正事');
+});
+
+test('重复规则：每月第 N 个周几只在该周生成，设置页可编辑', async (t) => {
+  const { request } = await fixture(t);
+  const saved = await (await request('/plugins/schedule/config', {
+    action: 'save',
+    config: {
+      enabled: true,
+      routine: {
+        work: { enabled: true, title: '上班', days: [1], start: '09:00', end: '18:00', place: '公司', repeat: '每月第1个' },
+      },
+    },
+  })).json();
+  assert.equal(saved.config.routine.work.repeat, 'monthly:1');
+
+  const settings = await (await request('/plugins/schedule/settings')).text();
+  assert.match(settings, /name="workRepeat"/);
+  assert.match(settings, /每月第1个/);
+
+  const first = await (await request('/plugins/schedule/generate', { date: '2026-12-07', force: true })).json();
+  assert.ok(first.plan.items.some((item: any) => item.kind === 'work'), '12-07 是 12 月第一个周一');
+  const second = await (await request('/plugins/schedule/generate', { date: '2026-12-14', force: true })).json();
+  assert.ok(!second.plan.items.some((item: any) => item.kind === 'work'), '12-14 不是第一个周一');
 });
 
 test('AI 润色：开启后用模型填空档，失败保留骨架', async (t) => {

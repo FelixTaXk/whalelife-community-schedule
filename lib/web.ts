@@ -190,11 +190,13 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
       const from = isValidDateKey(body?.from) ? body.from : dateKey(new Date());
       const days = Math.min(31, Math.max(1, Math.round(Number(body?.days) || 7)));
       const plans = await service.list(from, days);
+      const to = plans.length ? plans[plans.length - 1].date : from;
       const config = service.config;
       sendJson(res, 200, {
         ok: true,
         today: dateKey(new Date()),
         plans,
+        exceptions: await service.exceptions(from, to),
         config: {
           enabled: config.enabled,
           generateAt: config.generateAt,
@@ -254,6 +256,33 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         },
       );
       sendJson(res, 200, { ok: result.status === 'sent' || result.status === 'uncertain', ...result });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: errorText(error) });
+    }
+  });
+
+  ctx.web.api(base + 'exception', async (req: any, res: any, { signal }: { signal: AbortSignal }) => {
+    try {
+      const body = await readJson(req, signal);
+      if (!isValidDateKey(body?.date)) throw Error('日期格式应为 YYYY-MM-DD');
+      if (body?.action === 'clear') {
+        const plan = await service.clearException(body.date);
+        sendJson(res, 200, { ok: true, plan });
+        return;
+      }
+      if (body?.action && body.action !== 'set') throw Error('异常日动作只能是 set / clear');
+      const result = await service.setException(body.date, String(body?.kind ?? ''), typeof body?.note === 'string' ? body.note : '');
+      sendJson(res, 200, { ok: true, ...result });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: errorText(error) });
+    }
+  });
+
+  ctx.web.api(base + 'review', async (req: any, res: any, { signal }: { signal: AbortSignal }) => {
+    try {
+      const body = await readJson(req, signal);
+      const date = isValidDateKey(body?.date) ? body.date : dateKey(new Date());
+      sendJson(res, 200, { ok: true, ...(await service.review(date)) });
     } catch (error) {
       sendJson(res, 400, { ok: false, error: errorText(error) });
     }

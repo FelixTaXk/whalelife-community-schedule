@@ -26,6 +26,7 @@ export function dayTag(plan: Plan): string {
   if (plan.holiday) tags.push(`${plan.holiday.name}第${plan.holiday.dayIndex + 1}/${plan.holiday.days}天`);
   if (plan.workday) tags.push(plan.workday);
   if (plan.travel) tags.push(`旅行·${plan.travel.destination}`);
+  if (plan.exception) tags.push(`异常日·${plan.exception.label}`);
   return tags.join(' · ');
 }
 

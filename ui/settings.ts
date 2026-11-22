@@ -2,6 +2,7 @@
 
 import type { Config } from '../lib/types.ts';
 import { PRESETS } from '../lib/types.ts';
+import { repeatInput } from '../lib/recurrence.ts';
 import { BASE_CSS, escapeHtml } from './theme.ts';
 
 export type SettingsData = {
@@ -100,6 +101,7 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
     <label>开始<input type="time" name="workStart" value="${escapeHtml(cfg.routine.work.start)}"></label>
     <label>结束<input type="time" name="workEnd" value="${escapeHtml(cfg.routine.work.end)}"></label>
     <div class="wide"><span class="muted">哪几天</span><div class="days" style="margin-top:6px">${chips('workDays', cfg.routine.work.days)}</div></div>
+    <label class="wide">重复规则（可空，默认每周）<input type="text" name="workRepeat" maxlength="80" value="${escapeHtml(repeatInput(cfg.routine.work.repeat ?? ''))}" placeholder="双周 @2026-11-16 / 每月第2个 / 每月最后"></label>
   </div>
 </section>
 
@@ -117,15 +119,16 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
     <label>运动时间<input type="time" name="exerciseStart" value="${escapeHtml(cfg.routine.exercise.start)}"></label>
     <label>运动时长（分钟）<input type="number" name="exerciseMinutes" min="10" max="180" value="${cfg.routine.exercise.minutes}"></label>
     <div class="wide"><span class="muted">哪几天运动</span><div class="days" style="margin-top:6px">${chips('exerciseDays', cfg.routine.exercise.days)}</div></div>
+    <label class="wide">重复规则（可空，默认每周）<input type="text" name="exerciseRepeat" maxlength="80" value="${escapeHtml(repeatInput(cfg.routine.exercise.repeat ?? ''))}" placeholder="双周 @2026-11-16 / 每月第1个 / 每月最后"></label>
   </div>
 </section>
 
 <section class="card">
   <h2>固定安排 <span class="pill">可选</span></h2>
-  <label>每行一条：标题 | 星期 | 开始 | 分钟 | 地点
-    <textarea name="fixedText" spellcheck="false" placeholder="买日用品 | 1,3,5 | 17:20 | 20 | 超市&#10;和朋友吃饭 | 6 | 15:00 | 90 | 餐厅">${escapeHtml(fixedText)}</textarea>
+  <label>每行一条：标题 | 星期/重复规则 | 开始 | 分钟 | 地点
+    <textarea name="fixedText" spellcheck="false" placeholder="买日用品 | 1,3,5 | 17:20 | 20 | 超市&#10;和朋友吃饭 | 6 | 15:00 | 90 | 餐厅&#10;值夜班 | 双周 5 @2026-11-16 | 21:00 | 120 | 公司">${escapeHtml(fixedText)}</textarea>
   </label>
-  <p class="hint">星期写 1–7（周一 = 1），或 每天 / 工作日 / 周末。固定安排优先级最高，会和正事、三餐自动让位。</p>
+  <p class="hint">星期写 1–7（周一 = 1），或 每天 / 工作日 / 周末。第二列还能加重复规则：<b>双周 1,3,5 @2026-11-16</b>（以该日期所在周为基准隔周）、<b>每月第2个 3</b>、<b>每月最后 5</b>；用 <b>!2026-12-01</b> 排除某天。固定安排优先级最高，会和正事、三餐自动让位。</p>
   <label>爱好池（空档从这里轮着挑，一行一个或用顿号分隔）
     <textarea name="hobbies" spellcheck="false">${escapeHtml(hobbiesText)}</textarea>
   </label>
@@ -237,10 +240,10 @@ form.onsubmit=async(e)=>{
         style:val('travelStyle')},
       routine:{wake:val('wake'),sleep:val('sleep'),wakeMinutes:num('wakeMinutes'),breakfastMinutes:num('breakfastMinutes'),
         commuteMinutes:num('commuteMinutes'),windDownMinutes:num('windDownMinutes'),
-        work:{enabled:checked('workEnabled'),title:val('workTitle'),days:days('workDays'),start:val('workStart'),end:val('workEnd'),place:val('workPlace')},
+        work:{enabled:checked('workEnabled'),title:val('workTitle'),days:days('workDays'),start:val('workStart'),end:val('workEnd'),place:val('workPlace'),repeat:val('workRepeat')},
         lunch:{enabled:checked('lunchEnabled'),start:val('lunchStart'),minutes:num('lunchMinutes')},
         dinner:{enabled:checked('dinnerEnabled'),start:val('dinnerStart'),minutes:num('dinnerMinutes')},
-        exercise:{enabled:checked('exerciseEnabled'),title:val('exerciseTitle'),days:days('exerciseDays'),start:val('exerciseStart'),minutes:num('exerciseMinutes')},
+        exercise:{enabled:checked('exerciseEnabled'),title:val('exerciseTitle'),days:days('exerciseDays'),start:val('exerciseStart'),minutes:num('exerciseMinutes'),repeat:val('exerciseRepeat')},
       }};
     const r=await post('config',{action:'save',config,fixedText:val('fixedText'),hobbiesText:val('hobbies'),holidayText:val('holidayText'),holidayWorkdays:val('holidayWorkdays'),travelText:val('travelText')});
     setMsg(r.warnings&&r.warnings.length?'已保存，有提醒：'+r.warnings.join('；'):'已保存。今天和后面的计划会按新作息补排。');

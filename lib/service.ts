@@ -2,8 +2,10 @@
 
 import type { Context } from '../../../core/context.ts';
 import { augmentWithModel } from './ai.ts';
+import { applyException, exceptionKey, isExceptionKind, makeException, type ExceptionDay, type ExceptionKind } from './exceptions.ts';
 import { resolveDayInfo } from './holidays.ts';
 import { generatePlan, isStale } from './plan.ts';
+import { weeklyReview, weekStartOf, type WeeklyReview } from './review.ts';
 import type { BlockKind, Config, ItemStatus, Plan, PlanItem } from './types.ts';
 import { BLOCK_KINDS, normalizeConfig } from './types.ts';
 import { resolveTravel, travelCandidates, travelKey, type TravelOverride } from './travel.ts';
@@ -134,27 +136,30 @@ export class ScheduleService {
     const snapshot = this.current;
     const task = (async () => {
       const existing = await this.store.read(date);
+      const exception = await this.store.readException(date);
+      const effective = exception ? applyException(snapshot, exception) : snapshot;
       const live = this.liveDay(date);
       if (existing && !options.force) {
         if (existing.edited) return existing;
-        const stale = isStale(existing, snapshot);
+        const stale = isStale(existing, effective);
         const weatherChanged = live ? existing.weatherKey !== weatherKey(live) : false;
-        if (!stale && !weatherChanged) return existing;
+        const exceptionChanged = (existing.exceptionKey ?? '') !== exceptionKey(exception);
+        if (!stale && !weatherChanged && !exceptionChanged) return existing;
       }
       const day = live ?? await this.fetchDay(date);
-      const override = options.allowAi === false ? null : await this.travelOverride(snapshot, date);
-      let plan = generatePlan(snapshot, date, override);
-      plan = applyWeatherRules(plan, day, snapshot.routine);
-      if (options.allowAi !== false && snapshot.ai.enabled && snapshot.ai.model) {
+      const override = options.allowAi === false ? null : await this.travelOverride(effective, date);
+      let plan = generatePlan(effective, date, override, exception);
+      plan = applyWeatherRules(plan, day, effective.routine);
+      if (options.allowAi !== false && effective.ai.enabled && effective.ai.model) {
         try {
-          plan = await augmentWithModel(this.ctx, snapshot, plan);
+          plan = await augmentWithModel(this.ctx, effective, plan);
         } catch (error) {
           plan.aiError = errorText(error);
           this.ctx.logger.warn('日程模型润色失败', { date, error: plan.aiError });
         }
       }
       // 模型可能忽略天气提示，最后再兜一次；这段是幂等的。
-      plan = applyWeatherRules(plan, day, snapshot.routine);
+      plan = applyWeatherRules(plan, day, effective.routine);
       const current = await this.store.read(date);
       if (current?.edited && !options.force) return current;
       await this.store.write(plan);
@@ -210,6 +215,7 @@ export class ScheduleService {
     ];
     if (upcoming.length > 1) lines.push('后面：' + upcoming.slice(1).map(label).join('；') + '。');
     if (plan.weather?.text) lines.push(`天气：${cleanText(plan.weather.text, 40)}。`);
+    if (plan.exception) lines.push(`今天是异常日（${plan.exception.label}）：${cleanText(plan.exception.note, 40)}，安排已按这个状态压缩。`);
     if (plan.weatherAdjusted?.length) lines.push('已按天气调整：' + plan.weatherAdjusted.slice(0, 2).join('；') + '。');
     lines.push('这是你自己的安排。按现在这个时段自然说话和行动；被问到安排时直接用它，不要编，也不用再调 schedule_now。');
     return lines.join('\n');
@@ -338,6 +344,48 @@ export class ScheduleService {
     await this.store.write(next);
     this.ctx.emit('plugin:schedule:edited', { date });
     return next;
+  }
+
+  async readException(date: string): Promise<ExceptionDay | null> {
+    if (!isValidDateKey(date)) return null;
+    return this.store.readException(date);
+  }
+
+  /** 设定异常日并立即重排当天；失败时异常记录保留，下次生成会自动套用。 */
+  async setException(date: string, kind: string, note = '', options: EnsureOptions = {}): Promise<{ exception: ExceptionDay; plan: Plan }> {
+    if (!isValidDateKey(date)) throw Error('日期格式应为 YYYY-MM-DD');
+    if (!isExceptionKind(kind)) throw Error('异常类型只能是 sick / leave / overtime / rest');
+    return this.serial(date, async () => {
+      const exception = makeException(date, kind as ExceptionKind, note);
+      await this.store.writeException(exception);
+      const plan = await this.ensure(date, { ...options, force: true });
+      return { exception, plan };
+    });
+  }
+
+  /** 撤销异常日并恢复常规排程。 */
+  async clearException(date: string): Promise<Plan> {
+    if (!isValidDateKey(date)) throw Error('日期格式应为 YYYY-MM-DD');
+    return this.serial(date, async () => {
+      await this.store.removeException(date);
+      return this.ensure(date, { force: true });
+    });
+  }
+
+  async exceptions(from: string, to: string): Promise<ExceptionDay[]> {
+    const start = isValidDateKey(from) ? from : dateKey(new Date());
+    const end = isValidDateKey(to) ? to : addDays(start, 6);
+    return this.store.exceptions(start, end);
+  }
+
+  /** 周复盘：本周 + 上周对比，只看已落盘的计划。 */
+  async review(date: string): Promise<WeeklyReview> {
+    const anchor = isValidDateKey(date) ? date : dateKey(new Date());
+    const start = weekStartOf(anchor);
+    const from = addDays(start, -7);
+    const plans = (await this.list(from, 14)).map((entry) => entry.plan).filter((plan): plan is Plan => Boolean(plan));
+    const exceptions = await this.store.exceptions(from, addDays(start, 6));
+    return weeklyReview(plans, exceptions, anchor);
   }
 
   status(): { lastError: string; lastTickAt: string; ticking: boolean } {

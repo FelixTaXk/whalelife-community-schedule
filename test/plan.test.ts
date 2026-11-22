@@ -120,7 +120,7 @@ test('配置校验：非法时间回落，天数被夹住，爱好去重', () =>
   assert.equal(config.routine.wake, '06:05');
   assert.deepEqual(config.routine.work.days, [1]);
   assert.deepEqual(config.routine.hobbies, ['画画', '听歌']);
-  assert.equal(normalizeRoutine(null).wake, '06:40');
+  assert.equal(normalizeRoutine(null).wake, '07:10');
 });
 
 test('固定安排文本解析与报错', () => {

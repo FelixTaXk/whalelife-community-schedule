@@ -2,6 +2,7 @@
 
 import type { Context } from '../../../core/context.ts';
 import type { ScheduleService } from './service.ts';
+import { EXCEPTION_LABELS } from './exceptions.ts';
 import type { WeatherBridge } from './weather-bridge.ts';
 import { briefRange, formatEditResult, formatNow, formatPlan, nowInfo } from './format.ts';
 import { addDays, dateKey, isValidDateKey } from './time.ts';
@@ -114,6 +115,43 @@ export function registerTools(ctx: Context, service: ScheduleService, weather: W
         return `${header}\n已按作息排好 ${plan.items.length} 项，共 ${plan.items.filter((item) => item.kind !== 'sleep').length} 段安排。`;
       } catch (error) {
         return `生成日程失败：${errorText(error)}`;
+      }
+    },
+  });
+
+  ctx.tools.register({
+    name: 'schedule_exception',
+    description: '处理异常日：生病、临时请假、加班、休息半天/一天时，用 set 一键生成当天覆盖版（不改长期作息）；恢复了用 clear 撤销；read 只读当前异常记录。用户说「今天不舒服」「请假了」「要加班」「今天想休息」时用。',
+    schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['read', 'set', 'clear'], description: 'read 查看、set 设置、clear 撤销' },
+        date: { type: 'string', description: '日期 YYYY-MM-DD，省略就是今天' },
+        kind: { type: 'string', enum: ['sick', 'leave', 'overtime', 'half', 'rest'], description: 'set 时用：生病 / 请假 / 加班 / 休息半天 / 休息' },
+        note: { type: 'string', description: '可选原因，最多 80 字' },
+      },
+      required: ['action'],
+    },
+    danger: 'safe',
+    origin: { platform: '日程', action: '异常日' },
+    run: async (args: any) => {
+      try {
+        const date = pickDate(args?.date);
+        const action = String(args?.action ?? 'read');
+        if (action === 'read') {
+          const exception = await service.readException(date);
+          if (!exception) return `${date} 不是异常日。`;
+          return `${date} 是异常日：${exception.note || exception.kind}（${EXCEPTION_LABELS[exception.kind]}）。日程已按当天状态压缩。`;
+        }
+        if (action === 'clear') {
+          const plan = await service.clearException(date);
+          return `已取消 ${date} 的异常日，恢复常规排程。\n${formatPlan(plan, 'brief')}`;
+        }
+        if (action !== 'set') throw Error('动作只能是 read / set / clear');
+        const result = await service.setException(date, String(args?.kind ?? ''), typeof args?.note === 'string' ? args.note : '');
+        return `已把 ${date} 设为 ${result.exception.kind} 异常日：${result.exception.note}。长期作息没改，点 clear 可撤销。\n${formatPlan(result.plan, 'brief')}`;
+      } catch (error) {
+        return `异常日操作失败：${errorText(error)}`;
       }
     },
   });

@@ -1,6 +1,7 @@
 /*! 日程 plugin · 配置数据结构、默认作息与校验。 */
 
 import type { WeatherDay } from './weather-types.ts';
+import { fixedWhenText, normalizeRepeat, occursOn, parseFixedWhen, repeatInput } from './recurrence.ts';
 import { clamp, formatHHMM, isTime, isValidDateKey, parseHHMM } from './time.ts';
 
 export type BlockKind =
@@ -35,11 +36,28 @@ export type WorkRoutine = {
   start: string;
   end: string;
   place: string;
+  /** 可空的重复规则：weekly / biweekly@日期 / monthly:N / last。 */
+  repeat?: string;
 };
 
 export type MealRoutine = { enabled: boolean; start: string; minutes: number };
-export type ExerciseRoutine = { enabled: boolean; title: string; days: number[]; start: string; minutes: number };
-export type FixedItem = { title: string; days: number[]; start: string; minutes: number; place: string };
+export type ExerciseRoutine = {
+  enabled: boolean;
+  title: string;
+  days: number[];
+  start: string;
+  minutes: number;
+  repeat?: string;
+};
+export type FixedItem = {
+  title: string;
+  days: number[];
+  start: string;
+  minutes: number;
+  place: string;
+  /** 可空的重复规则；空表示按 days 每周。 */
+  repeat?: string;
+};
 
 export type Routine = {
   wake: string;
@@ -193,6 +211,15 @@ export type Plan = {
     days: number;
     source: TravelSource;
   };
+  /** 当天是异常日时保留原因，方便复盘和展示。 */
+  exception?: {
+    kind: 'sick' | 'leave' | 'overtime' | 'half' | 'rest';
+    label: string;
+    note: string;
+    createdAt: string;
+  };
+  /** 异常日指纹；配置没变但原因改了时也触发重排。 */
+  exceptionKey?: string;
 };
 
 export const TONES = ['安静', '平稳', '轻快', '有点困', '挺专注', '松松散散', '还不错'] as const;
@@ -356,6 +383,7 @@ function normalizeFixed(value: unknown, fallback: FixedItem[]): FixedItem[] {
       start: time(source.start, '09:00'),
       minutes: integer(source.minutes, 60, 10, 480),
       place: text(source.place, 20),
+      repeat: normalizeRepeat(source.repeat),
     });
   }
   return items;
@@ -463,7 +491,7 @@ function normalizeTravelConfig(value: unknown, fallback: TravelConfig): TravelCo
 }
 
 export function normalizeRoutine(value: unknown): Routine {
-  const base = cloneRoutine(STUDENT_ROUTINE);
+  const base = cloneRoutine(OFFICE_ROUTINE);
   if (!value || typeof value !== 'object') return base;
   const raw = value as Record<string, any>;
   const work = raw.work && typeof raw.work === 'object' ? raw.work : {};
@@ -484,6 +512,7 @@ export function normalizeRoutine(value: unknown): Routine {
       start: time(work.start, base.work.start),
       end: time(work.end, base.work.end),
       place: text(work.place, 20),
+      repeat: normalizeRepeat(work.repeat),
     },
     lunch: {
       enabled: bool(lunch.enabled, base.lunch.enabled),
@@ -501,6 +530,7 @@ export function normalizeRoutine(value: unknown): Routine {
       days: normalizeDays(exercise.days, base.exercise.days),
       start: time(exercise.start, base.exercise.start),
       minutes: integer(exercise.minutes, base.exercise.minutes, 10, 180),
+      repeat: normalizeRepeat(exercise.repeat),
     },
     fixed: normalizeFixed(raw.fixed, base.fixed),
     hobbies: normalizeHobbies(raw.hobbies, base.hobbies),
@@ -558,9 +588,9 @@ export function parseFixedText(value: unknown): { items: FixedItem[]; errors: st
       errors.push(`第 ${items.length + 1} 条缺少标题`);
       continue;
     }
-    const days = parseDaysText(parts[1] ?? '每天');
-    if (!days.length) {
-      errors.push(`「${title}」的星期写法看不懂，用 1,3,5 或 每天 / 工作日 / 周末`);
+    const when = parseFixedWhen(parts[1] ?? '每天');
+    if (!when.days.length || when.error) {
+      errors.push(`「${title}」的星期/重复规则看不懂：${when.error || '用 1,3,5 或 每天 / 工作日 / 周末，也可以写 双周 1,3,5 @2026-11-16'}`);
       continue;
     }
     const start = parseHHMM(parts[2] ?? '');
@@ -575,10 +605,11 @@ export function parseFixedText(value: unknown): { items: FixedItem[]; errors: st
     }
     items.push({
       title: title.slice(0, 24),
-      days,
+      days: when.days,
       start: formatHHMM(start),
       minutes: Math.round(minutes),
       place: (parts[4] ?? '').slice(0, 20),
+      repeat: when.repeat,
     });
   }
   return { items, errors };
@@ -701,20 +732,9 @@ export function formatTravelText(spots: TravelSpot[]): string {
   }).join('\n');
 }
 
-function parseDaysText(value: string): number[] {  const compact = value.replace(/\s+/g, '');
-  if (!compact) return [1, 2, 3, 4, 5, 6, 7];
-  if (compact === '每天' || compact === '天天' || compact === '*' || compact === '每日') return [1, 2, 3, 4, 5, 6, 7];
-  if (compact === '工作日' || compact === '周一到周五') return [1, 2, 3, 4, 5];
-  if (compact === '周末') return [6, 7];
-  if (/^[1-7](?:[,、，/][1-7])*$/.test(compact)) {
-    return normalizeDays(compact.split(/[,、，/]/).map(Number), []);
-  }
-  return [];
-}
-
 export function formatFixedText(items: FixedItem[]): string {
   return items
-    .map((item) => [item.title, item.days.join(','), item.start, String(Math.round(item.minutes)), item.place]
+    .map((item) => [item.title, fixedWhenText(item.days, item.repeat ?? ''), item.start, String(Math.round(item.minutes)), item.place]
       .join(' | ').replace(/ \| $/, ''))
     .join('\n');
 }
