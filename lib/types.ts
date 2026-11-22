@@ -77,6 +77,97 @@ export type Routine = {
 
 export type AiConfig = { enabled: boolean; model: string; style: string };
 
+/** 人格日记：按当天日程、天气和穿搭自动写一篇，可由写它的人格再读回来。 */
+export type JournalStyleId = 'natural' | 'plain' | 'warm' | 'playful' | 'literary' | 'reflection' | 'custom';
+
+export type JournalStyle = { id: JournalStyleId; name: string; hint: string; prompt: string };
+
+export const JOURNAL_STYLES: readonly JournalStyle[] = [
+  {
+    id: 'natural',
+    name: '自然记录',
+    hint: '像随手记下的一天，具体、平静，不刻意抒情',
+    prompt: '用自然、具体的语气记录今天，写清楚发生了什么、当时的感受和一个小细节；不堆形容词，不写总结报告。',
+  },
+  {
+    id: 'plain',
+    name: '克制纪实',
+    hint: '按时间线写事实，少评价，像私人日志',
+    prompt: '以克制、纪实的方式写，按时间顺序写关键片段；少用比喻和评价，保留一点自己的判断。',
+  },
+  {
+    id: 'warm',
+    name: '温柔陪伴',
+    hint: '语气柔和，关注身体和情绪，不鸡汤',
+    prompt: '用温柔、贴近的语气写，关注今天的身体状态、情绪起伏和被人照顾/照顾自己的瞬间；不要空泛地鼓励。',
+  },
+  {
+    id: 'playful',
+    name: '轻松俏皮',
+    hint: '带一点吐槽和玩笑，但不刻薄',
+    prompt: '用轻松、俏皮的口吻写，可以有一点自嘲和吐槽，但不刻薄、不攻击别人；仍然要写具体发生的事。',
+  },
+  {
+    id: 'literary',
+    name: '文学随笔',
+    hint: '有画面和节奏，比喻服务事实，不堆砌',
+    prompt: '用文学随笔的写法，写出光线、声音、气味和动作的画面；比喻要服务当天真实发生的事，不要堆砌辞藻。',
+  },
+  {
+    id: 'reflection',
+    name: '复盘反思',
+    hint: '写今天做成了什么、卡在哪、明天想改什么',
+    prompt: '用复盘的语气写：今天完成了什么、哪里卡住了、身体和情绪如何、明天最想调整的一件事；不要写成工作汇报。',
+  },
+  {
+    id: 'custom',
+    name: '自定义',
+    hint: '按你写的风格说明或示例来',
+    prompt: '',
+  },
+];
+
+export type JournalConfig = {
+  enabled: boolean;
+  /** 空 = 只有一个角色时自动用它；多角色时必须选。 */
+  persona: string;
+  /** 空 = 跟随所选人格的模型。 */
+  model: string;
+  /** 空 = 按睡前洗漱时间自动推算；填 HH:MM 则固定。 */
+  at: string;
+  style: JournalStyleId;
+  customStyle: string;
+  styleSample: string;
+  useWeather: boolean;
+  useWardrobe: boolean;
+};
+
+export type JournalEntry = {
+  version: 1;
+  date: string;
+  personaId: string;
+  personaName: string;
+  title: string;
+  body: string;
+  mood: string;
+  tags: string[];
+  style: JournalStyleId;
+  styleName: string;
+  model: string;
+  source: 'auto' | 'manual' | 'edited';
+  createdAt: string;
+  facts: {
+    items: number;
+    done: number;
+    skipped: number;
+    weather?: string;
+    wardrobe?: string;
+    exception?: string;
+    travel?: string;
+    holiday?: string;
+  };
+};
+
 /** 只读 ICS 订阅：关闭时只能手动下载，开启时在本机起一个带随机令牌的 HTTP 出口。 */
 export type IcsConfig = { enabled: boolean; port: number };
 
@@ -172,6 +263,7 @@ export type Config = {
   daysAhead: number;
   keepDays: number;
   ai: AiConfig;
+  journal: JournalConfig;
   reminder: ReminderConfig;
   holiday: HolidayConfig;
   travel: TravelConfig;
@@ -385,6 +477,17 @@ export function defaultConfig(): Config {
     daysAhead: 2,
     keepDays: 60,
     ai: { enabled: false, model: '', style: '' },
+    journal: {
+      enabled: false,
+      persona: '',
+      model: '',
+      at: '',
+      style: 'natural',
+      customStyle: '',
+      styleSample: '',
+      useWeather: true,
+      useWardrobe: true,
+    },
     reminder: {
       enabled: false,
       channel: 'qq',
@@ -645,6 +748,22 @@ function normalizeLeads(value: unknown, fallback: Record<string, number>): Recor
   return leads;
 }
 
+function normalizeJournalConfig(value: unknown, fallback: JournalConfig): JournalConfig {
+  const raw = value && typeof value === 'object' ? (value as Record<string, any>) : {};
+  const style = JOURNAL_STYLES.some((item) => item.id === raw.style) ? raw.style as JournalStyleId : fallback.style;
+  return {
+    enabled: bool(raw.enabled, fallback.enabled),
+    persona: raw.persona === undefined ? fallback.persona : text(raw.persona, 80),
+    model: raw.model === undefined ? fallback.model : text(raw.model, 80),
+    at: raw.at === undefined ? fallback.at : (raw.at ? time(raw.at, '') : ''),
+    style,
+    customStyle: raw.customStyle === undefined ? fallback.customStyle : text(raw.customStyle, 500),
+    styleSample: raw.styleSample === undefined ? fallback.styleSample : text(raw.styleSample, 800),
+    useWeather: bool(raw.useWeather, fallback.useWeather),
+    useWardrobe: bool(raw.useWardrobe, fallback.useWardrobe),
+  };
+}
+
 export function normalizeConfig(value: unknown, fallback: Config = defaultConfig()): Config {
   const raw = value && typeof value === 'object' ? (value as Record<string, any>) : {};
   const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
@@ -660,6 +779,7 @@ export function normalizeConfig(value: unknown, fallback: Config = defaultConfig
       model: text(ai.model, 80),
       style: text(ai.style, 300),
     },
+    journal: normalizeJournalConfig(raw.journal, fallback.journal),
     reminder: {
       enabled: bool(reminder.enabled, false),
       channel: text(reminder.channel, 40) || fallback.reminder.channel,

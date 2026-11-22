@@ -6,6 +6,7 @@ import type { ReminderService } from './reminder.ts';
 import type { IcsServer } from './ics.ts';
 import { buildIcs } from './ics.ts';
 import type { WeatherBridge } from './weather-bridge.ts';
+import type { JournalService } from './journal.ts';
 import { settingsPage, type SettingsData } from '../ui/settings.ts';
 import { calendarPage } from '../ui/calendar.ts';
 import {
@@ -64,7 +65,7 @@ function parseHobbies(value: unknown): string[] | undefined {
 
 export type WebOptions = { version: string };
 
-export function registerWeb(ctx: Context, service: ScheduleService, weather: WeatherBridge, reminder: ReminderService, ics: IcsServer, options: WebOptions) {
+export function registerWeb(ctx: Context, service: ScheduleService, weather: WeatherBridge, reminder: ReminderService, ics: IcsServer, journal: JournalService, options: WebOptions) {
   const base = '/plugins/schedule/';
 
   async function snapshot(): Promise<SettingsData> {
@@ -73,6 +74,12 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
       models = ctx.models.list('chat').map((model) => ({ id: model.id, name: model.name, callable: model.callable }));
     } catch (error) {
       ctx.logger.warn('日程读取模型列表失败', { error: errorText(error) });
+    }
+    let personas: SettingsData['personas'] = [];
+    try {
+      personas = ctx.personas.list().map((persona: any) => ({ id: persona.id, name: persona.name }));
+    } catch (error) {
+      ctx.logger.warn('日程读取人格列表失败', { error: errorText(error) });
     }
     const weatherSummary = await weather.settingsSummary();
     return {
@@ -83,6 +90,8 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
       holidayWorkdays: formatWorkdaysText(service.config.holiday.workdays),
       travelText: formatTravelText(service.config.travel.spots),
       models,
+      personas,
+      journal: journal.status(),
       status: {
         lastError: service.status().lastError,
         lastTickAt: service.status().lastTickAt,
@@ -185,6 +194,7 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
           warnings.push(...parsed.errors);
         }
         const config = await service.saveConfig({ ...raw, routine, holiday, travel });
+        journal.resetFailure();
         void service.refreshAfterConfig();
         void ics.reload().catch((error) => ctx.logger.warn('日程 ICS 服务重载失败', { error: errorText(error) }));
         sendJson(res, 200, {
@@ -203,6 +213,7 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         const preset = PRESETS.find((entry) => entry.id === String(body?.preset ?? ''));
         if (!preset) throw Error('没有这个模板');
         const config = await service.saveConfig({ ...service.config, routine: cloneRoutine(preset.routine) });
+        journal.resetFailure();
         void service.refreshAfterConfig();
         sendJson(res, 200, { ok: true, config, fixedText: formatFixedText(config.routine.fixed), hobbiesText: config.routine.hobbies.join('\n') });
         return;
@@ -227,16 +238,65 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         plans,
         exceptions: await service.exceptions(from, to),
         todos: await service.todos(),
+        journals: await journal.listRange(from, days),
         config: {
           enabled: config.enabled,
           generateAt: config.generateAt,
           daysAhead: config.daysAhead,
           aiEnabled: config.ai.enabled,
           aiModel: config.ai.model,
+          journalEnabled: config.journal.enabled,
+          journalPersona: config.journal.persona,
+          journalPersonaName: journal.status().personaName,
+          journalTime: journal.status().time,
+          journalModel: journal.status().model,
         },
         status: service.status(),
         weather: await weather.quick(),
       });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: errorText(error) });
+    }
+  });
+
+  ctx.web.api(base + 'journal', async (req: any, res: any, { signal }: { signal: AbortSignal }) => {
+    try {
+      const body = await readJson(req, signal);
+      const action = String(body?.action ?? 'read');
+      const date = isValidDateKey(body?.date) ? body.date : dateKey(new Date());
+      const personaId = typeof body?.personaId === 'string' ? body.personaId : undefined;
+      if (action === 'read') {
+        sendJson(res, 200, { ok: true, entry: await journal.read(date, personaId) });
+        return;
+      }
+      if (action === 'list') {
+        const from = isValidDateKey(body?.from) ? body.from : addDays(date, -6);
+        const days = Math.min(31, Math.max(1, Math.round(Number(body?.days) || 7)));
+        sendJson(res, 200, { ok: true, entries: await journal.listRange(from, days, personaId) });
+        return;
+      }
+      if (action === 'generate') {
+        const entry = await journal.generate(date, { force: body?.force === true, personaId, origin: 'manual' });
+        journal.resetFailure();
+        sendJson(res, 200, { ok: true, entry });
+        return;
+      }
+      if (action === 'edit') {
+        const entry = await journal.edit(date, {
+          body: String(body?.body ?? ''),
+          title: body?.title,
+          mood: body?.mood,
+          tags: Array.isArray(body?.tags) ? body.tags : undefined,
+          personaId,
+        });
+        sendJson(res, 200, { ok: true, entry });
+        return;
+      }
+      if (action === 'delete') {
+        sendJson(res, 200, { ok: true, deleted: await journal.remove(date, personaId) });
+        return;
+      }
+      throw Error('动作只能是 read / list / generate / edit / delete');
     } catch (error) {
       sendJson(res, 400, { ok: false, error: errorText(error) });
     }
@@ -310,6 +370,7 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
       const raw = payload?.config && typeof payload.config === 'object' ? payload.config : payload;
       if (!raw || typeof raw !== 'object') throw Error('导入文件里没有配置');
       const config = await service.saveConfig(raw);
+      journal.resetFailure();
       void service.refreshAfterConfig();
       void ics.reload().catch(() => undefined);
       sendJson(res, 200, { ok: true, config });

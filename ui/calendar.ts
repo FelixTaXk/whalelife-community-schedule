@@ -85,6 +85,19 @@ export function calendarPage(data: CalendarData): string {
 .itin li{margin:2px 0}
 .itin .budget{color:var(--accent)}
 .itin .backup{color:var(--warn)}
+.diary{margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:linear-gradient(180deg,rgba(255,255,255,.5),var(--soft))}
+.diary + .diary{margin-top:10px}
+.diaryhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.diaryhead h3{margin:0;font-size:16px}
+.diaryhead span{font-size:12px;color:var(--muted)}
+.diary p{white-space:pre-wrap;line-height:1.75;margin:8px 0 0;font-size:14px}
+.diary .meta{font-size:12px;color:var(--muted);margin-top:6px}
+.diary .ops{display:flex;gap:6px;margin-top:8px}
+.diaryempty{color:var(--muted);font-size:13px;padding:6px 0}
+.diaryedit{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.diaryedit textarea{min-height:120px;width:100%}
+.diaryedit .row{margin:0}
+.diaryedit input{max-width:80px}
 @media(max-width:560px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.rvcols{grid-template-columns:1fr}}
 </style></head><body><main>
 <header>
@@ -103,7 +116,7 @@ export function calendarPage(data: CalendarData): string {
 <section class="card" id="day"></section></main>
 <script>
 var API='/plugins/schedule/';
-var state={today:${JSON.stringify(data.today)},weekStart:${JSON.stringify(initialWeek)},regionWeek:${JSON.stringify(startDay)},selected:${JSON.stringify(data.today)},plans:{},exceptions:{},review:null,todos:[],editing:null,config:null,status:null,weather:null,busy:false};
+var state={today:${JSON.stringify(data.today)},weekStart:${JSON.stringify(initialWeek)},regionWeek:${JSON.stringify(startDay)},selected:${JSON.stringify(data.today)},plans:{},exceptions:{},review:null,todos:[],journals:[],editing:null,diaryEditing:null,config:null,status:null,weather:null,busy:false};
 var COLORS={routine:'#8fa5a3',meal:'#d78b4a',commute:'#5b8bb8',work:'#17906f',study:'#2f8f8f',exercise:'#c25b5b',free:'#7a6fbf',chore:'#9a7d55',rest:'#6f8f9a',social:'#b0709a',fixed:'#b39431',travel:'#c07a3e',sleep:'#3f4f55',todo:'#a8682a'};
 var KIND={routine:'日常',meal:'用餐',commute:'路上',work:'正事',study:'学习',exercise:'运动',free:'自由',chore:'家务',rest:'休息',social:'社交',fixed:'固定',travel:'旅行',sleep:'睡觉',todo:'待办'};
 var WEEK=['一','二','三','四','五','六','日'];
@@ -127,6 +140,7 @@ async function load(){
     state.plans={};r.plans.forEach(function(entry){if(entry.plan)state.plans[entry.date]=entry.plan});
     state.exceptions={};(r.exceptions||[]).forEach(function(ex){state.exceptions[ex.date]=ex});
     state.todos=r.todos||[];
+    state.journals=r.journals||[];
     state.config=r.config;state.status=r.status;state.today=r.today||state.today;state.weather=r.weather||null;
     try{state.review=await post('review',{date:state.selected})}catch(e){state.review=null}
     render();
@@ -212,6 +226,8 @@ function renderBanner(){
   var html='';
   if(state.config&&!state.config.enabled)html+='<div class="alert">自动生成已关闭：只能手动点「重排这天」或「生成这天」。</div>';
   if(state.config&&state.config.aiEnabled&&!state.config.aiModel)html+='<div class="alert">AI 润色开着但没选模型，目前只会用规则骨架。</div>';
+  if(state.config&&state.config.journalEnabled&&!state.config.journalPersonaName)html+='<div class="alert">人格日记开着，但还没确定写日记的人格：到设置里选一个，或只保留一个角色。</div>';
+  if(state.config&&state.config.journalEnabled&&state.config.journalPersonaName&&!state.config.journalModel)html+='<div class="alert">人格日记开着，但没找到可用模型：到设置里给日记选一个模型。</div>';
   if(state.status&&state.status.lastError)html+='<div class="alert bad">上次生成出错：'+esc(state.status.lastError)+'</div>';
   document.getElementById('banner').innerHTML=html;
 }
@@ -249,7 +265,7 @@ function renderTabs(){
     tabs.push('<div class="tab'+has+active+today+'" data-date="'+key+'"><b>周'+WEEK[weekdayOf(key)-1]+'</b><span>'+dayTitle(key).replace(' 周'+WEEK[weekdayOf(key)-1],'')+'</span>'+(wd?'<span class="wx">'+esc(wd.icon)+'</span>':'<span class="wx"> </span>')+'<span class="dot"></span></div>');
   }
   var el=document.getElementById('tabs');el.innerHTML=tabs.join('');
-  [].forEach.call(el.querySelectorAll('.tab'),function(tab){tab.onclick=function(){state.selected=tab.getAttribute('data-date');state.editing=null;renderTabs();renderDay()}});
+  [].forEach.call(el.querySelectorAll('.tab'),function(tab){tab.onclick=function(){state.selected=tab.getAttribute('data-date');state.editing=null;state.diaryEditing=null;renderTabs();renderDay()}});
 }
 function nowLine(plan){
   if(!plan||plan.date!==state.today)return '';
@@ -280,10 +296,41 @@ function exBar(key,exception){
   else ['sick','leave','overtime','half','rest'].forEach(function(kind){html+='<button type="button" class="small" data-act="exception" data-kind="'+kind+'">'+exLabel(kind)+'</button>'});
   return html+'</div>';
 }
+function diaryEntries(key){
+  return (state.journals||[]).filter(function(entry){return entry.date===key});
+}
+function diaryEditor(entry){
+  return '<div class="diaryedit">'
+    +'<input id="dTitle" maxlength="30" value="'+esc(entry.title)+'" placeholder="标题">'
+    +'<input id="dMood" maxlength="12" value="'+esc(entry.mood||'')+'" placeholder="心情，可空">'
+    +'<input id="dTags" maxlength="80" value="'+esc((entry.tags||[]).join('、'))+'" placeholder="标签，用、分开，可空">'
+    +'<textarea id="dBody" maxlength="1200" placeholder="写点什么">'+esc(entry.body)+'</textarea>'
+    +'<div class="row"><button type="button" class="small primary" data-diary="save" data-persona="'+esc(entry.personaId)+'">保存</button><button type="button" class="small" data-diary="cancel">取消</button></div></div>';
+}
+function diaryBlock(key){
+  var entries=diaryEntries(key);
+  var editable=key<=state.today;
+  var head='<div class="diaryhead"><h3>人格日记</h3><span>'+(entries.length?entries.length+' 篇 · 只有写它的人格能读':'还没有')+'</span></div>';
+  if(!entries.length){
+    return '<section class="diary">'+head+'<div class="diaryempty">'+(editable?'这天还没有日记。让当前人格根据当天日程、天气和穿搭写一篇。':'未来日期不能写日记。')+'</div>'
+      +(editable?'<div class="ops"><button type="button" class="small primary" data-diary="generate">让当前人格写一篇</button></div>':'')+'</section>';
+  }
+  var cards=entries.map(function(entry){
+    var editing=state.diaryEditing&&state.diaryEditing.date===key&&state.diaryEditing.personaId===entry.personaId;
+    var meta=[entry.personaName,entry.styleName,entry.mood?('心情 '+entry.mood):'',(entry.tags||[]).length?('#'+entry.tags.join(' #')):''].filter(Boolean).join(' · ');
+    var ops='';
+    if(!editing)ops='<div class="ops"><button type="button" class="small" data-diary="generate" data-persona="'+esc(entry.personaId)+'">重写</button>'
+      +'<button type="button" class="small" data-diary="edit" data-persona="'+esc(entry.personaId)+'">编辑</button>'
+      +'<button type="button" class="small" data-diary="delete" data-persona="'+esc(entry.personaId)+'">删除</button></div>';
+    return '<div class="diary"><div class="diaryhead"><h3>'+esc(entry.title)+'</h3><span>'+esc(meta)+'</span></div>'
+      +(editing?diaryEditor(entry):'<p>'+esc(entry.body)+'</p>')+ops+'</div>';
+  }).join('');
+  return '<section class="diary">'+head+cards+'</section>';
+}
 function renderDay(){
   var el=document.getElementById('day'),key=state.selected,plan=state.plans[key],exception=state.exceptions[key];
   if(!plan){
-    el.innerHTML='<h2>'+esc(dayTitle(key))+(exception?'<span class="pill warn">异常日 · '+esc(exLabel(exception.kind))+'</span>':'')+'</h2>'+weatherBar(key)+'<div class="empty">这天还没有日程。</div>'+exBar(key,exception)+'<div class="row"><button type="button" data-act="generate">按作息生成这天</button></div>';
+    el.innerHTML='<h2>'+esc(dayTitle(key))+(exception?'<span class="pill warn">异常日 · '+esc(exLabel(exception.kind))+'</span>':'')+'</h2>'+weatherBar(key)+'<div class="empty">这天还没有日程。</div>'+diaryBlock(key)+exBar(key,exception)+'<div class="row"><button type="button" data-act="generate">按作息生成这天</button></div>';
     bindDay();return;
   }
   var srcLabel=plan.source==='ai'?'模型润色':(plan.source==='manual'?'手动':'自动');
@@ -324,7 +371,7 @@ function renderDay(){
       +'<div class="body"><b>'+esc(item.title)+'</b><span class="meta">'+esc(meta)+'</span>'+(item.note?'<span class="meta">'+esc(item.note)+'</span>':'')
       +(ops?'<span class="ops">'+ops+'</span>':'')+editor+'</div></li>';
   }).join('');
-  el.innerHTML=head+'<ul class="timeline">'+list+'</ul>'+exBar(key,exception)
+  el.innerHTML=head+'<ul class="timeline">'+list+'</ul>'+diaryBlock(key)+exBar(key,exception)
     +'<div class="adday"><input type="time" id="fStart" value="09:00"><input type="time" id="fEnd" value="10:00">'
     +'<input type="text" id="fTitle" maxlength="24" placeholder="加一件事，例如 取快递">'
     +'<button type="button" class="primary" data-act="add">加上</button></div>';
@@ -336,6 +383,35 @@ function bindDay(){
   [].forEach.call(el.querySelectorAll('[data-act]'),function(button){
     button.onclick=function(){act(button.getAttribute('data-act'),button.getAttribute('data-id'),button.getAttribute('data-status'),button.getAttribute('data-kind'))};
   });
+  [].forEach.call(el.querySelectorAll('[data-diary]'),function(button){
+    button.onclick=function(){diaryAct(button.getAttribute('data-diary'),button.getAttribute('data-persona'))};
+  });
+}
+async function diaryAct(action,personaId){
+  var key=state.selected;
+  try{
+    if(action==='generate'){
+      var entries=diaryEntries(key);
+      var existing=personaId?entries.filter(function(entry){return entry.personaId===personaId})[0]:entries[0];
+      if(existing&&!confirm('重写 '+existing.personaName+' 的这篇日记？原文会被覆盖。'))return;
+      await post('journal',{action:'generate',date:key,force:!!existing,personaId:personaId||undefined});
+      await load();
+    }else if(action==='edit'){
+      state.diaryEditing={date:key,personaId:personaId};
+      renderDay();
+    }else if(action==='cancel'){
+      state.diaryEditing=null;renderDay();
+    }else if(action==='save'){
+      var tags=document.getElementById('dTags').value.split(/[、,，]/).map(function(tag){return tag.trim()}).filter(Boolean);
+      await post('journal',{action:'edit',date:key,personaId:personaId,title:document.getElementById('dTitle').value,
+        mood:document.getElementById('dMood').value,tags:tags,body:document.getElementById('dBody').value});
+      state.diaryEditing=null;await load();
+    }else if(action==='delete'){
+      if(!confirm('删掉这篇日记？'))return;
+      await post('journal',{action:'delete',date:key,personaId:personaId});
+      await load();
+    }
+  }catch(error){alert('日记操作失败：'+error.message)}
 }
 async function act(name,id,status,kind){
   var key=state.selected;
@@ -376,9 +452,9 @@ async function act(name,id,status,kind){
     await load();
   }catch(error){alert(error.message)}
 }
-document.getElementById('prev').onclick=function(){state.weekStart=addDays(state.weekStart,-7);state.selected=addDays(state.selected,-7);state.editing=null;load()};
-document.getElementById('next').onclick=function(){state.weekStart=addDays(state.weekStart,7);state.selected=addDays(state.selected,7);state.editing=null;load()};
-document.getElementById('home').onclick=function(){state.weekStart=weekStartOf(state.today,state.regionWeek);state.selected=state.today;state.editing=null;load()};
+document.getElementById('prev').onclick=function(){state.weekStart=addDays(state.weekStart,-7);state.selected=addDays(state.selected,-7);state.editing=null;state.diaryEditing=null;load()};
+document.getElementById('next').onclick=function(){state.weekStart=addDays(state.weekStart,7);state.selected=addDays(state.selected,7);state.editing=null;state.diaryEditing=null;load()};
+document.getElementById('home').onclick=function(){state.weekStart=weekStartOf(state.today,state.regionWeek);state.selected=state.today;state.editing=null;state.diaryEditing=null;load()};
 document.getElementById('regen').onclick=async function(){
   var plan=state.plans[state.selected];
   var warn=plan&&plan.edited?'这天有手动改过的地方，重排会覆盖。继续？':'按当前作息重排这天？';

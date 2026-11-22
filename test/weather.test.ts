@@ -94,7 +94,10 @@ async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'whale-weather-'));
   await mkdir(join(root, 'config'), { recursive: true });
   await mkdir(join(root, 'plugins'), { recursive: true });
-  await cp(resolve('plugins/schedule'), join(root, 'plugins/schedule'), { recursive: true });
+  await cp(resolve('plugins/schedule'), join(root, 'plugins/schedule'), {
+    recursive: true,
+    filter: (source) => !/sub[\\/]wardrobe/.test(source),
+  });
   await writeFile(join(root, 'config/config.json'), JSON.stringify({
     log: { level: 'error' },
     web: { port: 0 },

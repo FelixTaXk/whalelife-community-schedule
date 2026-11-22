@@ -10,6 +10,7 @@ import { ScheduleService } from './lib/service.ts';
 import { ReminderService } from './lib/reminder.ts';
 import { WeatherBridge } from './lib/weather-bridge.ts';
 import { IcsServer } from './lib/ics.ts';
+import { JournalService } from './lib/journal.ts';
 import { registerTools } from './lib/tools.ts';
 import { registerWeb } from './lib/web.ts';
 
@@ -29,22 +30,24 @@ export async function apply(ctx: Context) {
   const weather = WeatherBridge.create(ctx);
   const reminder = new ReminderService(ctx, service);
   const ics = new IcsServer(ctx, service);
+  const journal = new JournalService(ctx, service, weather);
   service.setWeather(weather);
-  registerTools(ctx, service, weather);
-  registerWeb(ctx, service, weather, reminder, ics, { version: VERSION });
+  registerTools(ctx, service, weather, journal);
+  registerWeb(ctx, service, weather, reminder, ics, journal, { version: VERSION });
   void ics.start().catch((error) => ctx.logger.warn('日程 ICS 服务启动失败', { error: error instanceof Error ? error.message : String(error) }));
   ctx.effect(() => () => { void ics.stop(); });
 
-  // 第一层：每轮把“现在/下一项”注入当前人格的上下文。宿主没有 context 服务时静默跳过。
+  // 第一层：每轮把“现在/下一项”和一条日记索引注入当前人格的上下文。宿主没有 context 服务时静默跳过。
   const ambient = (ctx as any).context;
   if (ambient && typeof ambient.register === 'function') {
-    ctx.effect(() => ambient.register(async () => service.ambient()));
+    ctx.effect(() => ambient.register(async (input: any) => [await service.ambient(), await journal.ambient(input?.personaId)].filter(Boolean).join('\n\n')));
   }
 
   // 每分钟检查一次：跨天、过生成时间、配置改动后都能补上；不做集中补发。
   const ticker = setInterval(() => {
     void service.tick().catch(() => undefined);
     void reminder.tick().catch(() => undefined);
+    void journal.tick().catch(() => undefined);
   }, 60_000);
   ticker.unref?.();
   ctx.effect(() => () => clearInterval(ticker));
@@ -52,6 +55,7 @@ export async function apply(ctx: Context) {
   const kick = () => {
     void service.tick().catch(() => undefined);
     void reminder.tick().catch(() => undefined);
+    void journal.tick().catch(() => undefined);
   };
   kick();
   ctx.on('whalelife/ready', () => { kick(); });
@@ -61,6 +65,7 @@ export async function apply(ctx: Context) {
     try {
       await service.ensureToday();
       void reminder.tick().catch(() => undefined);
+      void journal.tick().catch(() => undefined);
     } catch (error) {
       ctx.logger.warn('日程补生成失败', { error: error instanceof Error ? error.message : String(error) });
     }
@@ -70,6 +75,7 @@ export async function apply(ctx: Context) {
     enabled: service.config.enabled,
     generateAt: service.config.generateAt,
     ai: service.config.ai.enabled,
+    journal: service.config.journal.enabled,
     weather: weather.available,
     reminder: service.config.reminder.enabled,
   });

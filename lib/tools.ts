@@ -4,6 +4,7 @@ import type { Context } from '../../../core/context.ts';
 import type { ScheduleService } from './service.ts';
 import { EXCEPTION_LABELS } from './exceptions.ts';
 import type { WeatherBridge } from './weather-bridge.ts';
+import { journalSummary, type JournalService } from './journal.ts';
 import { briefRange, formatEditResult, formatNow, formatPlan, nowInfo } from './format.ts';
 import { addDays, dateKey, isValidDateKey } from './time.ts';
 
@@ -15,7 +16,7 @@ function pickDate(value: unknown): string {
   return typeof value === 'string' && isValidDateKey(value) ? value : dateKey(new Date());
 }
 
-export function registerTools(ctx: Context, service: ScheduleService, weather: WeatherBridge) {
+export function registerTools(ctx: Context, service: ScheduleService, weather: WeatherBridge, journal: JournalService) {
   ctx.tools.register({
     name: 'schedule_today',
     description: '读取今天的日程（时间、安排、地点、完成状态）。用户问「今天有什么安排」「今天要做什么」「今天的计划」时先调用它，不要凭记忆编造。今天还没生成时会自动补一份。',
@@ -205,6 +206,50 @@ export function registerTools(ctx: Context, service: ScheduleService, weather: W
         throw Error('动作只能是 list / add / schedule / done / remove');
       } catch (error) {
         return `待办操作失败：${errorText(error)}`;
+      }
+    },
+  });
+
+  ctx.tools.register({
+    name: 'schedule_diary',
+    description: '读取人格日记：today 看今天的日记，read 看指定日期，search 按关键词搜索，list 看最近几天。日记是当前人格自己写的，内容只属于当前人格；需要回顾当天发生了什么、引用自己写过的话时调用，不要凭记忆编造。',
+    schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['today', 'read', 'search', 'list'], description: 'today 今天；read 指定日期；search 搜索；list 最近日记' },
+        date: { type: 'string', description: 'read 用的日期 YYYY-MM-DD，省略就是今天' },
+        query: { type: 'string', description: 'search 用的关键词，最多 40 字' },
+        limit: { type: 'integer', description: 'search / list 返回条数，1–10，默认 5' },
+      },
+      required: ['action'],
+    },
+    danger: 'safe',
+    origin: { platform: '日程', action: '读取人格日记' },
+    run: async (args: any, session: any) => {
+      try {
+        const personaId = typeof session?.personaId === 'string' ? session.personaId : undefined;
+        const action = String(args?.action ?? 'today');
+        const limit = Math.min(10, Math.max(1, Math.round(Number(args?.limit) || 5)));
+        if (action === 'today' || action === 'read') {
+          const date = action === 'today' ? dateKey(new Date()) : pickDate(args?.date);
+          const entry = await journal.read(date, personaId);
+          if (!entry) return `${date} 还没有日记。可以在「日程」页让当前人格补写一篇。`;
+          return `这是你在 ${date} 写的日记。\n\n${journalSummary(entry)}`;
+        }
+        if (action === 'search') {
+          const entries = await journal.search(String(args?.query ?? ''), personaId, limit);
+          if (!entries.length) return '没有找到包含这个关键词的日记。';
+          return entries.map((entry) => `${entry.date}《${entry.title}》\n${entry.body.replace(/\s+/g, ' ').slice(0, 80)}${entry.body.length > 80 ? '…' : ''}`).join('\n\n');
+        }
+        if (action === 'list') {
+          const today = dateKey(new Date());
+          const entries = await journal.listRange(addDays(today, -29), 30, personaId);
+          if (!entries.length) return '最近 30 天还没有日记。';
+          return entries.slice(-limit).reverse().map((entry) => `${entry.date}《${entry.title}》${entry.mood ? ` · ${entry.mood}` : ''}`).join('\n');
+        }
+        throw Error('动作只能是 today / read / search / list');
+      } catch (error) {
+        return `读取日记失败：${errorText(error)}`;
       }
     },
   });

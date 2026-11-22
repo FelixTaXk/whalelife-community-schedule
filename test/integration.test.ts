@@ -11,7 +11,10 @@ async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'whale-schedule-'));
   await mkdir(join(root, 'config'), { recursive: true });
   await mkdir(join(root, 'plugins'), { recursive: true });
-  await cp(resolve('plugins/schedule'), join(root, 'plugins/schedule'), { recursive: true });
+  await cp(resolve('plugins/schedule'), join(root, 'plugins/schedule'), {
+    recursive: true,
+    filter: (source) => !/sub[\\/]wardrobe/.test(source),
+  });
   await mkdir(join(root, 'plugins/schedule/sub/weather/data'), { recursive: true });
   await mkdir(join(root, 'plugins/schedule/data'), { recursive: true });
   await writeFile(join(root, 'plugins/schedule/data/config.json'), JSON.stringify({
@@ -84,8 +87,10 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   const settings = await request('/plugins/schedule/settings');
   assert.equal(settings.status, 200);
   const settingsHtml = await settings.text();
-  assert.match(settingsHtml, /v0\.7\.0/, '设置页版本号应从 plugin.yaml 读取');
+  assert.match(settingsHtml, /v0\.8\.0/, '设置页版本号应从 plugin.yaml 读取');
   assert.match(settingsHtml, /日程/);
+  assert.match(settingsHtml, /人格日记/);
+  assert.match(settingsHtml, /journalEnabled/);
   assert.match(settingsHtml, /主动提醒/);
   assert.match(settingsHtml, /reminderEnabled/);
   assert.match(settingsHtml, /节假日与假期/);
@@ -136,7 +141,7 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   assert.equal(saved.items[0].status, 'done');
 
   const toolNames = app.tools.list().map((tool: any) => tool.function.name).filter((name: string) => name.startsWith('schedule_'));
-  assert.deepEqual(toolNames.sort(), ['schedule_edit', 'schedule_exception', 'schedule_generate', 'schedule_now', 'schedule_range', 'schedule_today', 'schedule_todo']);
+  assert.deepEqual(toolNames.sort(), ['schedule_diary', 'schedule_edit', 'schedule_exception', 'schedule_generate', 'schedule_now', 'schedule_range', 'schedule_today', 'schedule_todo']);
   const todayText = String((await app.tools.call('schedule_today', {}, { permission: 'full' })).result);
   assert.match(todayText, /起床/);
   const nowText = String((await app.tools.call('schedule_now', {}, { permission: 'full' })).result);
@@ -283,6 +288,66 @@ test('重复规则：每月第 N 个周几只在该周生成，设置页可编�
   assert.ok(first.plan.items.some((item: any) => item.kind === 'work'), '12-07 是 12 月第一个周一');
   const second = await (await request('/plugins/schedule/generate', { date: '2026-12-14', force: true })).json();
   assert.ok(!second.plan.items.some((item: any) => item.kind === 'work'), '12-14 不是第一个周一');
+});
+
+test('人格日记：按日程和天气生成、按人格隔离、可编辑并被人格读回', async (t) => {
+  const { app, request, requests } = await fixture(t);
+  const date = todayKey();
+  const saved = await (await request('/plugins/schedule/config', {
+    action: 'save',
+    config: {
+      enabled: true,
+      journal: { enabled: true, persona: 'main', model: 'chat', at: '00:00', style: 'natural', useWardrobe: false },
+    },
+  })).json();
+  assert.equal(saved.config.journal.enabled, true);
+  assert.equal(saved.config.journal.persona, 'main');
+
+  app.llm.chat = async (input: any) => {
+    requests.push(input);
+    const system = String(input.messages.find((message: any) => message.role === 'system')?.content ?? '');
+    if (system.includes('日记')) {
+      return {
+        text: JSON.stringify({ title: '把今天收好', body: '今天按计划做了几件事，傍晚的风比想象中轻。回到家时还有一点没做完，但我不打算把今天判成失败。', mood: '松弛', tags: ['日常', '收尾'] }),
+        toolCalls: [], usage: { prompt_tokens: 80, completion_tokens: 40 },
+      };
+    }
+    return { text: '{"tone":"轻快","note":"留一点空","fills":[]}', toolCalls: [], usage: { prompt_tokens: 20, completion_tokens: 4 } };
+  };
+
+  const generated = await (await request('/plugins/schedule/journal', { action: 'generate', date, force: true })).json();
+  assert.equal(generated.ok, true);
+  assert.equal(generated.entry.personaId, 'main');
+  assert.equal(generated.entry.title, '把今天收好');
+  assert.match(generated.entry.body, /今天/);
+  assert.equal(generated.entry.style, 'natural');
+
+  const diaryText = String((await app.tools.call('schedule_diary', { action: 'today' }, { permission: 'full', personaId: 'main' })).result);
+  assert.match(diaryText, /把今天收好/);
+  assert.match(diaryText, /今天按计划/);
+  const otherText = String((await app.tools.call('schedule_diary', { action: 'today' }, { permission: 'full', personaId: 'other' })).result);
+  assert.match(otherText, /找不到所选日记人格/, '日记只给写它的人格读');
+
+  const data = await (await request('/plugins/schedule/data', { from: date, days: 2 })).json();
+  assert.equal(data.journals.length, 1);
+  assert.equal(data.config.journalPersonaName, '测试人格');
+
+  const edited = await (await request('/plugins/schedule/journal', {
+    action: 'edit', date, personaId: 'main', title: '收好了', mood: '安静', tags: ['夜里'], body: '把今天收好，明天再打开。',
+  })).json();
+  assert.equal(edited.ok, true);
+  assert.equal(edited.entry.title, '收好了');
+  assert.equal(edited.entry.source, 'edited');
+
+  // 自定义文风会进入系统提示，旧日记不会被改写。
+  const custom = await (await request('/plugins/schedule/config', {
+    action: 'save', config: { journal: { enabled: true, persona: 'main', model: 'chat', style: 'custom', customStyle: '只用短句，写具体动作。' } },
+  })).json();
+  assert.equal(custom.config.journal.style, 'custom');
+  const rewritten = await (await request('/plugins/schedule/journal', { action: 'generate', date, force: true })).json();
+  assert.equal(rewritten.ok, true);
+  const lastPrompt = requests[requests.length - 1];
+  assert.match(String(lastPrompt.messages[0].content), /只用短句，写具体动作。/);
 });
 
 test('AI 润色：开启后用模型填空档，失败保留骨架', async (t) => {

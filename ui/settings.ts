@@ -1,7 +1,7 @@
 /*! 日程 plugin · 设置页。 */
 
 import type { Config } from '../lib/types.ts';
-import { PRESETS, presetIdOfRoutine } from '../lib/types.ts';
+import { JOURNAL_STYLES, PRESETS, presetIdOfRoutine } from '../lib/types.ts';
 import { repeatInput } from '../lib/recurrence.ts';
 import { BASE_CSS, escapeHtml } from './theme.ts';
 
@@ -13,6 +13,8 @@ export type SettingsData = {
   holidayWorkdays: string;
   travelText: string;
   models: Array<{ id: string; name: string; callable: boolean }>;
+  personas: Array<{ id: string; name: string }>;
+  journal: { enabled: boolean; time: string; autoTime: boolean; personaId: string; personaName: string; model: string; lastError: string; lastGeneratedAt: string };
   status: { lastError: string; lastTickAt: string; reminderLastError?: string; reminderLastSentAt?: string };
   weather: { available: boolean; summary: string };
   ics: { running: boolean; port: number; urls: string[] };
@@ -35,13 +37,25 @@ function options(models: SettingsData['models'], selected: string): string {
   return `<option value=""${selected ? '' : ' selected'}>不选择（只用规则骨架）</option>${list.join('')}`;
 }
 
+function journalModelOptions(models: SettingsData['models'], selected: string): string {
+  const list = models.map((model) => `<option value="${escapeHtml(model.id)}"${model.id === selected ? ' selected' : ''}>${escapeHtml(model.name)}${model.callable ? '' : '（当前不可调用）'}</option>`);
+  return `<option value=""${selected ? '' : ' selected'}>跟随人格模型</option>${list.join('')}`;
+}
+
+function journalPersonaOptions(personas: SettingsData['personas'], selected: string): string {
+  const list = personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === selected ? ' selected' : ''}>${escapeHtml(persona.name)}</option>`);
+  return `<option value=""${selected ? '' : ' selected'}>自动（只有一个角色时）</option>${list.join('')}`;
+}
+
 export function settingsPage(data: SettingsData): string {
-  const { config: cfg, fixedText, hobbiesText, holidayText, holidayWorkdays, travelText, models, status, ics } = data;
+  const { config: cfg, fixedText, hobbiesText, holidayText, holidayWorkdays, travelText, models, personas, journal, status, ics } = data;
   const currentPreset = presetIdOfRoutine(cfg.routine);
   const presetOptions = [
     `<option value=""${currentPreset ? '' : ' selected'}>自定义（当前作息）</option>`,
     ...PRESETS.map((preset) => `<option value="${escapeHtml(preset.id)}"${preset.id === currentPreset ? ' selected' : ''}>${escapeHtml(preset.name)} · ${escapeHtml(preset.hint)}</option>`),
   ].join('');
+  const styleOptions = JOURNAL_STYLES.map((style) => `<option value="${style.id}"${cfg.journal.style === style.id ? ' selected' : ''}>${escapeHtml(style.name)} · ${escapeHtml(style.hint)}</option>`).join('');
+  const journalTimeHint = journal.autoTime ? `留空 = 按睡前洗漱自动推算，现在是 ${journal.time}` : `固定 ${journal.time}`;
   const aiHint = models.length
     ? '开启后会调用所选模型，把空档换成具体安排（每次约一次请求，45 秒超时；失败保留规则骨架）。'
     : '当前没有可用的对话模型：先在 WhaleLife 的「模型」页配好一个 OpenAI 兼容的对话模型，再回来选。';
@@ -193,6 +207,29 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
 </section>
 
 <section class="card">
+  <h2>人格日记 <span class="pill ${cfg.journal.enabled ? 'good' : ''}">${cfg.journal.enabled ? '已开启' : '默认关闭'}</span></h2>
+  <div class="grid">
+    <label class="check wide"><input type="checkbox" name="journalEnabled" id="journalEnabled"${cfg.journal.enabled ? ' checked' : ''}> 每天到点后，让当前人格根据当天日程、天气和穿搭写一篇日记</label>
+    <label>写日记的人格<select name="journalPersona">${journalPersonaOptions(personas, cfg.journal.persona)}</select></label>
+    <label>日记模型<select name="journalModel">${journalModelOptions(models, cfg.journal.model)}</select></label>
+    <label>生成时间（可空）<input type="time" name="journalAt" value="${escapeHtml(cfg.journal.at)}"></label>
+    <label>文风<select name="journalStyle" id="journalStyle">${styleOptions}</select></label>
+    <label class="check"><input type="checkbox" name="journalWeather"${cfg.journal.useWeather ? ' checked' : ''}> 参考天气</label>
+    <label class="check"><input type="checkbox" name="journalWardrobe"${cfg.journal.useWardrobe ? ' checked' : ''}> 参考穿搭</label>
+    <label class="wide">自定义文风说明（选「自定义」时必填，最多 500 字）
+      <textarea name="journalCustom" id="journalCustom" maxlength="500" placeholder="例如：用短句，多写动作和声音，少用形容词；语气像深夜和自己说话。">${escapeHtml(cfg.journal.customStyle)}</textarea>
+    </label>
+    <label class="wide">文风示例（可空，最多 800 字；只学句式和节奏，不抄内容）
+      <textarea name="journalSample" id="journalSample" maxlength="800" placeholder="贴一段你喜欢的日记或文字。">${escapeHtml(cfg.journal.styleSample)}</textarea>
+    </label>
+  </div>
+  <p class="hint">${journalTimeHint}。日记按人格分开保存在插件自己的 data 里，只有写它的那个人格能读；每轮最多注入一条标题索引，人格需要时自己调用 <code>schedule_diary</code> 读全文。</p>
+  <p class="hint">生成时只把当天日程摘要、天气、穿搭发给所选模型，不读聊天原文，也不会自动写进宿主的核心记忆。多个人格时请先选写日记的人格；不选就只在只有一个角色时自动使用它。</p>
+  ${journal.lastError ? `<div class="alert bad"><b>上次日记生成失败</b><br>${escapeHtml(journal.lastError)}</div>` : ''}
+  ${journal.lastGeneratedAt ? `<p class="hint">上次生成：${escapeHtml(new Date(journal.lastGeneratedAt).toLocaleString('zh-CN'))}${journal.personaName ? ` · ${escapeHtml(journal.personaName)}` : ''}</p>` : ''}
+</section>
+
+<section class="card">
   <h2>主动提醒 <span class="pill ${cfg.reminder.enabled ? 'warn' : ''}">${cfg.reminder.enabled ? '已开启' : '默认关闭'}</span></h2>
   <div class="grid">
     <label class="check wide"><input type="checkbox" name="reminderEnabled"${cfg.reminder.enabled ? ' checked' : ''}> 到关键节点主动发一条消息</label>
@@ -279,6 +316,9 @@ form.onsubmit=async(e)=>{
   try{
     const config={enabled:checked('enabled'),generateAt:val('generateAt'),daysAhead:num('daysAhead'),keepDays:num('keepDays'),
       ai:{enabled:checked('aiEnabled'),model:val('aiModel'),style:val('aiStyle')},
+      journal:{enabled:checked('journalEnabled'),persona:val('journalPersona'),model:val('journalModel'),at:val('journalAt'),
+        style:val('journalStyle'),customStyle:val('journalCustom'),styleSample:val('journalSample'),
+        useWeather:checked('journalWeather'),useWardrobe:checked('journalWardrobe')},
       reminder:{enabled:checked('reminderEnabled'),channel:val('reminderChannel'),account:val('reminderAccount'),peer:val('reminderPeer'),
         persona:val('reminderPersona'),
         leadMinutes:num('reminderLead'),maxPerDay:num('reminderMax'),quietStart:val('reminderQuietStart'),quietEnd:val('reminderQuietEnd'),
@@ -305,6 +345,14 @@ form.onsubmit=async(e)=>{
 const aiEnabled=document.getElementById('aiEnabled'),aiModel=document.getElementById('aiModel');
 function syncAi(){aiModel.disabled=!aiEnabled.checked}
 aiEnabled.onchange=syncAi;syncAi();
+const journalStyle=document.getElementById('journalStyle');
+const journalCustom=document.getElementById('journalCustom'),journalSample=document.getElementById('journalSample');
+function syncJournalStyle(){
+  const custom=journalStyle.value==='custom';
+  journalCustom.closest('label').style.display=custom?'':'none';
+  journalSample.closest('label').style.display=custom?'':'none';
+}
+journalStyle.onchange=syncJournalStyle;syncJournalStyle();
 const presetSelect=document.getElementById('preset'),applyPreset=document.getElementById('applyPreset');
 function syncPreset(){applyPreset.disabled=!presetSelect.value}
 presetSelect.onchange=syncPreset;syncPreset();

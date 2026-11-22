@@ -67,6 +67,7 @@ export function applyException(config: Config, exception: ExceptionDay): Config 
     holiday: { ...config.holiday, periods: [...config.holiday.periods], workdays: [...config.holiday.workdays] },
     travel: { ...config.travel, spots: config.travel.spots.map((spot) => ({ ...spot })) },
     ai: { ...config.ai },
+    journal: { ...config.journal },
     reminder: { ...config.reminder },
   };
   if (exception.kind === 'sick' || exception.kind === 'rest') {
