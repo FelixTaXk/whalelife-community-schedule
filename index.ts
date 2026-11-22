@@ -9,6 +9,7 @@ import type { Context } from '../../core/context.ts';
 import { ScheduleService } from './lib/service.ts';
 import { ReminderService } from './lib/reminder.ts';
 import { WeatherBridge } from './lib/weather-bridge.ts';
+import { IcsServer } from './lib/ics.ts';
 import { registerTools } from './lib/tools.ts';
 import { registerWeb } from './lib/web.ts';
 
@@ -27,9 +28,12 @@ export async function apply(ctx: Context) {
   const service = await ScheduleService.create(ctx);
   const weather = WeatherBridge.create(ctx);
   const reminder = new ReminderService(ctx, service);
+  const ics = new IcsServer(ctx, service);
   service.setWeather(weather);
   registerTools(ctx, service, weather);
-  registerWeb(ctx, service, weather, reminder, { version: VERSION });
+  registerWeb(ctx, service, weather, reminder, ics, { version: VERSION });
+  void ics.start().catch((error) => ctx.logger.warn('日程 ICS 服务启动失败', { error: error instanceof Error ? error.message : String(error) }));
+  ctx.effect(() => () => { void ics.stop(); });
 
   // 第一层：每轮把“现在/下一项”注入当前人格的上下文。宿主没有 context 服务时静默跳过。
   const ambient = (ctx as any).context;

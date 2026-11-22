@@ -1,7 +1,7 @@
 /*! 日程 plugin · 日程生成（纯函数，不碰网络和文件）。 */
 
 import { createHash } from 'node:crypto';
-import type { BlockKind, Config, Plan, PlanItem, Routine } from './types.ts';
+import type { BlockKind, Config, Plan, PlanItem, Routine, TodoBlock } from './types.ts';
 import { NOTES, TONES } from './types.ts';
 import { resolveDayInfo } from './holidays.ts';
 import type { ExceptionDay } from './exceptions.ts';
@@ -23,6 +23,7 @@ type Segment = {
   note?: string;
   priority: number;
   auto?: boolean;
+  todoId?: string;
 };
 
 /** 固定安排 1、三餐 2、正事 3、旅行 3.5、运动 4、通勤 5、起床/睡前 6；数字小的先占位。 */
@@ -111,7 +112,13 @@ function freePiece(index: number, seedText: string): { title: string; kind: Bloc
 }
 
 /** 生成一天的日程骨架；空档已用自由安排铺好。 */
-export function generatePlan(config: Config, date: string, travelOverride?: TravelOverride | null, exception?: ExceptionDay | null): Plan {
+export function generatePlan(
+  config: Config,
+  date: string,
+  travelOverride?: TravelOverride | null,
+  exception?: ExceptionDay | null,
+  todoBlocks: TodoBlock[] = [],
+): Plan {
   const routine = config.routine;
   const weekday = isoWeekday(parseDateKey(date));
   const info = resolveDayInfo(config.holiday, date, weekday);
@@ -214,11 +221,32 @@ export function generatePlan(config: Config, date: string, travelOverride?: Trav
 
   let freeIndex = 0;
   const restful = Boolean(exception && (exception.kind === 'sick' || exception.kind === 'half' || exception.kind === 'rest'));
+  const pendingTodos = [...todoBlocks];
   for (const gap of gaps) {
-    const length = gap.end - gap.start;
-    if (length < 30) continue;
     let start = gap.start;
-    for (const size of chunks(length)) {
+    let remaining = gap.end - gap.start;
+    // 先塞待办：只有整段放得下才排，放不下就留给自由安排，不切碎。
+    for (let index = 0; index < pendingTodos.length;) {
+      const todo = pendingTodos[index];
+      if (todo.minutes > remaining) {
+        index += 1;
+        continue;
+      }
+      placed.push({
+        start,
+        end: start + todo.minutes,
+        title: todo.title,
+        kind: 'todo',
+        priority: 85,
+        auto: false,
+        todoId: todo.id,
+      });
+      start += todo.minutes;
+      remaining -= todo.minutes;
+      pendingTodos.splice(index, 1);
+    }
+    if (remaining < 30) continue;
+    for (const size of chunks(remaining)) {
       const piece = restful ? { title: '休息', kind: 'rest' as BlockKind } : freePiece(freeIndex, `${date}|${routineHash(routine)}`);
       const title = piece.title || `自由 · ${routine.hobbies[freeIndex % routine.hobbies.length]}`;
       placed.push({
@@ -251,6 +279,7 @@ export function generatePlan(config: Config, date: string, travelOverride?: Trav
     ...(segment.note ? { note: segment.note } : {}),
     status: 'pending',
     ...(segment.auto ? { auto: true } : {}),
+    ...(segment.todoId ? { todoId: segment.todoId } : {}),
   }));
 
   const hasTravelItem = items.some((item) => item.kind === 'travel');

@@ -5,6 +5,7 @@
 - 版本：以 `plugin.yaml` 为准
 - 依赖：`tools` / `web` / `llm` / `models`；`context` 是可选的宿主服务，旧宿主没有时自动跳过
 - 天气：随包提供的可选子插件 `sub/weather`
+- 衣柜：独立子插件 `schedule/wardrobe`，单独安装/更新；父包只带天气，不带服装图
 - 数据：只写本插件 `data/`；时间按宿主本地时区
 
 ## 能做什么
@@ -17,12 +18,13 @@
 6. **给模型 5 个工具**：读今天、读此刻、读多天、生成、编辑；全部 `safe` 权限。
 7. **天气子插件**：`sub/weather` 走 Open-Meteo，不需要 API key；提供实时天气和未来 1–7 天预报，参与运动、户外空档和周末安排。子插件独立配置、独立启停。
 8. **每轮上下文**：宿主有 `ctx.context.register()` 时，把当天计划的「正在 / 下一项 / 后面几项 / 天气调整」注入**当前人格**；不再限定某一个人格。没有该服务时聊天照常，模型仍可调用 `schedule_now`。
-9. **主动提醒**：起床、正事、通勤、三餐、运动、固定安排、旅行、睡觉前，按提前分钟通过已注册渠道发消息。默认走 QQ 的 `qq_send_message`；人格 ID 留空时使用宿主当前 Web 人格。
-10. **节假日与假期**：可选内置中国 2026–2027 法定节假日和调休日；也支持自定义假期、学生寒暑假/春秋假、额外调休日，以及自定义周末日（默认周六、周日）。
-11. **旅行安排**：周末和短假优先近处，长假期优先远途；地点池可写最少/最多天、指定日期段和备注；也可以指定目的地，或让 AI 从地点池里选。旅行按可用天数过滤，排不下就跳过；当天确实排入旅行时不再排常规运动。
-12. **异常日**：日历当天可一键切换「生病 / 请假 / 加班 / 休息半天 / 休息」。只替换当天的临时配置，不改长期作息：生病和休息停正事与运动，请假停正事，休息半天只保留上午正事、下午从 12:00 起休息，加班把下班延到 21:00 并顺延晚饭；旅行同步暂停。随时可撤销恢复常规排程，模型也可以通过 `schedule_exception` 工具操作。
-13. **周复盘**：日历页顶部展示本周完成率（含 pending 的口径和已处理口径）、完成/计划项、计划与完成时长、异常日数；下方有每日完成柱状、最常跳过项 Top 3、平均/最早/最晚入睡、旅行天数和运动完成次数，并对比上周完成率与完成项。
-14. **重复规则**：正事、运动和固定安排都支持 `每周`（默认）、`双周 @基准日期`、`每月第 1–5 个周几`、`每月最后`，可用 `!2026-12-01` 排除某天。固定安排第二列直接写，例如 `双周 1,3,5 @2026-11-16`；正事/运动在设置页有单独的重复规则输入框。
+9. **衣柜子插件（独立安装）**：`schedule/wardrobe` 按当天日程、天气和季节给当前人格配穿搭；支持锁定、备选、喜欢/不喜欢/屏蔽、多日打包、画室参考和混搭提示。父包 `sub` 只声明关系，衣柜从商城单独安装，避免日程更新重复下载服装图。
+10. **主动提醒**：起床、正事、通勤、三餐、运动、固定安排、旅行、睡觉前，按提前分钟通过已注册渠道发消息。默认走 QQ 的 `qq_send_message`；人格 ID 留空时使用宿主当前 Web 人格。
+11. **节假日与假期**：可选内置中国 2026–2027 法定节假日和调休日；也支持自定义假期、学生寒暑假/春秋假、额外调休日，以及自定义周末日（默认周六、周日）。
+12. **旅行安排**：周末和短假优先近处，长假期优先远途；地点池可写最少/最多天、指定日期段和备注；也可以指定目的地，或让 AI 从地点池里选。旅行按可用天数过滤，排不下就跳过；当天确实排入旅行时不再排常规运动。
+13. **异常日**：日历当天可一键切换「生病 / 请假 / 加班 / 休息半天 / 休息」。只替换当天的临时配置，不改长期作息：生病和休息停正事与运动，请假停正事，休息半天只保留上午正事、下午从 12:00 起休息，加班把下班延到 21:00 并顺延晚饭；旅行同步暂停。随时可撤销恢复常规排程，模型也可以通过 `schedule_exception` 工具操作。
+14. **周复盘**：日历页顶部展示本周完成率（含 pending 的口径和已处理口径）、完成/计划项、计划与完成时长、异常日数；下方有每日完成柱状、最常跳过项 Top 3、平均/最早/最晚入睡、旅行天数和运动完成次数，并对比上周完成率与完成项。
+15. **重复规则**：正事、运动和固定安排都支持 `每周`（默认）、`双周 @基准日期`、`每月第 1–5 个周几`、`每月最后`，可用 `!2026-12-01` 排除某天。固定安排第二列直接写，例如 `双周 1,3,5 @2026-11-16`；正事/运动在设置页有单独的重复规则输入框。
 
 ## 默认值
 
@@ -37,15 +39,17 @@
 ## 安装
 
 1. 在插件商店安装，或下载 Releases 里的 `schedule-<版本>.wlpkg.gz`。
-2. 把插件目录放到 WhaleLife 的 `plugins/schedule/`；目录名必须是 `schedule`（manifest 要求 id 与目录同名）。
+2. 目录名必须是 `schedule`（manifest 要求 id 与目录同名）。
 3. 重启 WhaleLife，或在控制台「插件管理」里重载。
 4. 控制台出现「日程」后，打开设置页完成城市、作息和提醒等配置。
+5. 需要穿搭时，再单独安装「衣柜」`schedule-wardrobe-<版本>.wlpkg.gz`；父包只带天气，不重复携带衣柜和服装图。
 
 页面入口：
 
 - 设置：`/plugins/schedule/settings`
 - 日历：`/plugins/schedule/calendar`
 - 天气设置：`/plugins/schedule/weather/settings`
+- 衣柜设置：`/plugins/schedule/wardrobe/settings`
 
 子插件更新后需要重启 WhaleLife，运行中的进程不会热扫 `sub/`。
 
@@ -97,6 +101,17 @@
 | `schedule_exception` | `action` read/set/clear、`date`、`kind`、`note` | 异常日：生病/请假/加班/休息半天/休息，一键覆盖当天或撤销 |
 | `weather_now` | — | 当前天气 + 今天建议 |
 | `weather_forecast` | `days` 1–7 | 未来几天预报 |
+| `wardrobe_*` | 见衣柜 README | 独立子插件提供的今日/此刻/指定段/挑衣/换装/备选/锁定/反馈/打包/参考图/混搭工具 |
+
+## 0.7.0 新增
+
+- 待办池：`schedule_todo` 工具或日历页管理；今天的空档自动填空（普通待办最多 2 条，「今天必须做」优先）；可钉到指定日期。
+- 提醒分级：正事 / 固定安排 / 待办可单独设提前分钟；休息日、节假日和异常日可静音；日历上「稍后」会持久化一条延后提醒，完成或删除条目后自动作废。
+- 日历导出：登录后可下载 `calendar.ics`；开启后在本机起一个带 48 位随机令牌的只读订阅服务，手机/电脑日历可直接订阅。服务只读已生成日程，关闭开关立即失效。
+- 旅行行程单：旅行块会附交通、住宿、行前清单、预算拆分和坏天气备选；预算与货币在设置页填写，不写死城市。
+- 小时级天气：天气子插件取 96 小时逐小时预报；通勤有降水时标注带伞，户外段给出降水最低的窗口，旅行备选日带时间窗。
+- 通用化：周起始日可改（影响日历与复盘）；可导入任意 ICS 日历的全天事件作为自定义假期；配置可导出/导入；导出日历支持中文/英文标题和时区。
+- 子插件发行：主插件、`schedule/weather`、`schedule/wardrobe` 分开打包；子插件条目依赖父插件，商店会先装主插件。
 
 ## HTTP 接口（页面用，均需登录）
 
@@ -106,6 +121,11 @@
 - `POST /plugins/schedule/item`：`{date, action, id?, start?, end?, title?, note?, place?, kind?, status?}`
 - `POST /plugins/schedule/exception`：`{date, action:"set"|"clear", kind?: sick|leave|overtime|half|rest, note?}`
 - `POST /plugins/schedule/review`：`{date?}` → 本周与上周复盘对比
+- `POST /plugins/schedule/todos`：`{action:"list"|"add"|"remove"|"schedule"|"unschedule", id?, title?, minutes?, priority?, date?}`
+- `POST /plugins/schedule/reminder/snooze`：`{date, id, minutes?}`
+- `POST /plugins/schedule/holiday/import`：`{text}`（ICS 文本）
+- `POST /plugins/schedule/config/import`：`{bundle}`；`GET /plugins/schedule/config/export` 下载配置
+- `GET /plugins/schedule/calendar.ics`：下载当前计划 ICS
 - `POST /plugins/schedule/reminder/test`：`{channel?, account?, peer?, text?}`
 - `POST /plugins/schedule/weather/config`：`{action:"read"|"geocode"|"save", city?, config?}`
 - `POST /plugins/schedule/weather/data`：`{force?}`
@@ -115,6 +135,8 @@
 - `data/config.json`：设置。
 - `data/days/YYYY-MM-DD.json`：每天的计划；`keepDays` 之外自动清理。
 - `data/exceptions.json`：异常日记录（`{version:1, days:{日期: {kind, note, createdAt}}}`），和计划一起按 `keepDays` 清理。
+- `data/todos.json`：待办池，跨天保留；最多 100 条。
+- `data/ics.json`：只读订阅服务的随机令牌（不随配置导出）。
 - `data/reminders/YYYY-MM-DD.json`：当天提醒记录，用于去重和每日上限。
 - `data/travel.json`：AI 选过的目的地缓存。
 - `sub/weather/data/config.json`：天气配置。

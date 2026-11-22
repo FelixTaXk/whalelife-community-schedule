@@ -3,6 +3,8 @@
 import type { Context, PluginHandler } from '../../../core/context.ts';
 import type { ScheduleService } from './service.ts';
 import type { ReminderService } from './reminder.ts';
+import type { IcsServer } from './ics.ts';
+import { buildIcs } from './ics.ts';
 import type { WeatherBridge } from './weather-bridge.ts';
 import { settingsPage, type SettingsData } from '../ui/settings.ts';
 import { calendarPage } from '../ui/calendar.ts';
@@ -18,7 +20,8 @@ import {
   parseWorkdaysText,
   PRESETS,
 } from './types.ts';
-import { dateKey, isValidDateKey } from './time.ts';
+import { dateKey, addDays, isValidDateKey } from './time.ts';
+import { parseHolidayIcs } from './ics-holidays.ts';
 
 function sendJson(res: any, code: number, body: unknown) {
   res.statusCode = code;
@@ -61,7 +64,7 @@ function parseHobbies(value: unknown): string[] | undefined {
 
 export type WebOptions = { version: string };
 
-export function registerWeb(ctx: Context, service: ScheduleService, weather: WeatherBridge, reminder: ReminderService, options: WebOptions) {
+export function registerWeb(ctx: Context, service: ScheduleService, weather: WeatherBridge, reminder: ReminderService, ics: IcsServer, options: WebOptions) {
   const base = '/plugins/schedule/';
 
   async function snapshot(): Promise<SettingsData> {
@@ -87,6 +90,7 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         reminderLastSentAt: reminder.lastSentAt,
       },
       weather: { available: weather.available, summary: weatherSummary },
+      ics: ics.status(),
       today: dateKey(new Date()),
       version: options.version,
     };
@@ -110,10 +114,34 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
     settings: true,
   });
 
-  ctx.web.page(base + 'calendar', page(async () => calendarPage({ today: dateKey(new Date()), version: options.version }), '日程'), {
+  ctx.web.page(base + 'calendar', page(async () => calendarPage({ today: dateKey(new Date()), version: options.version, weekStart: service.config.region.weekStart }), '日程'), {
     title: '日程',
     navigation: true,
   });
+
+  ctx.web.page(base + 'calendar.ics', async (_req: any, res: any) => {
+    try {
+      const today = dateKey(new Date());
+      const plans = (await service.list(addDays(today, -30), 90))
+        .map((entry) => entry.plan)
+        .filter((plan) => Boolean(plan));
+      const body = buildIcs(plans, {
+        leadMinutes: service.config.reminder.leadMinutes,
+        host: 'schedule.whalelife',
+        name: service.config.region.language === 'en-US' ? 'Schedule' : '日程',
+        language: service.config.region.language,
+        timezone: service.config.region.timezone,
+      });
+      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="schedule.ics"');
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(body);
+    } catch (error) {
+      ctx.logger.warn('日程 ICS 下载失败', { error: errorText(error) });
+      res.statusCode = 500;
+      res.end('日程导出失败');
+    }
+  }, { title: '日程导出' });
 
   ctx.web.api(base + 'config', async (req: any, res: any, { signal }: { signal: AbortSignal }) => {
     try {
@@ -158,6 +186,7 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         }
         const config = await service.saveConfig({ ...raw, routine, holiday, travel });
         void service.refreshAfterConfig();
+        void ics.reload().catch((error) => ctx.logger.warn('日程 ICS 服务重载失败', { error: errorText(error) }));
         sendJson(res, 200, {
           ok: true,
           config,
@@ -197,6 +226,7 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         today: dateKey(new Date()),
         plans,
         exceptions: await service.exceptions(from, to),
+        todos: await service.todos(),
         config: {
           enabled: config.enabled,
           generateAt: config.generateAt,
@@ -256,6 +286,96 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
         },
       );
       sendJson(res, 200, { ok: result.status === 'sent' || result.status === 'uncertain', ...result });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: errorText(error) });
+    }
+  });
+
+  ctx.web.page(base + 'config/export', async (_req: any, res: any) => {
+    try {
+      const body = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), config: service.config }, null, 2);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="schedule-config.json"');
+      res.end(body);
+    } catch (error) {
+      res.statusCode = 500;
+      res.end(errorText(error));
+    }
+  }, { title: '日程配置导出' });
+
+  ctx.web.api(base + 'config/import', async (req: any, res: any, { signal }: { signal: AbortSignal }) => {
+    try {
+      const body = await readJson(req, signal);
+      const payload = body?.bundle && typeof body.bundle === 'object' ? body.bundle : body;
+      const raw = payload?.config && typeof payload.config === 'object' ? payload.config : payload;
+      if (!raw || typeof raw !== 'object') throw Error('导入文件里没有配置');
+      const config = await service.saveConfig(raw);
+      void service.refreshAfterConfig();
+      void ics.reload().catch(() => undefined);
+      sendJson(res, 200, { ok: true, config });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: errorText(error) });
+    }
+  });
+
+  ctx.web.api(base + 'holiday/import', async (req: any, res: any, { signal }: { signal: AbortSignal }) => {
+    try {
+      const body = await readJson(req, signal);
+      const parsed = parseHolidayIcs(typeof body?.text === 'string' ? body.text : '');
+      if (!parsed.periods.length) throw Error(parsed.errors.join('；') || '没有可导入的假期');
+      const existing = service.config.holiday.periods.filter((period) => period.kind !== 'custom' || !parsed.periods.some((item) => item.name === period.name && item.start === period.start));
+      const periods = [...existing, ...parsed.periods].slice(0, 60);
+      const config = await service.saveConfig({ ...service.config, holiday: { ...service.config.holiday, periods } });
+      void service.refreshAfterConfig();
+      sendJson(res, 200, { ok: true, imported: parsed.periods.length, warnings: parsed.errors, config });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: errorText(error) });
+    }
+  });
+
+  ctx.web.api(base + 'todos', async (req: any, res: any, { signal }: { signal: AbortSignal }) => {
+    try {
+      const body = await readJson(req, signal);
+      const action = String(body?.action ?? 'list');
+      if (action === 'list') {
+        sendJson(res, 200, { ok: true, todos: await service.todos() });
+        return;
+      }
+      if (action === 'add') {
+        const todo = await service.addTodo({ title: body?.title, minutes: body?.minutes, priority: body?.priority, note: body?.note });
+        sendJson(res, 200, { ok: true, todo, todos: await service.todos() });
+        return;
+      }
+      if (action === 'remove') {
+        await service.removeTodo(String(body?.id ?? ''));
+        sendJson(res, 200, { ok: true, todos: await service.todos() });
+        return;
+      }
+      if (action === 'schedule') {
+        if (!isValidDateKey(body?.date)) throw Error('日期格式应为 YYYY-MM-DD');
+        const plan = await service.scheduleTodo(body.date, String(body?.id ?? ''));
+        sendJson(res, 200, { ok: true, plan, todos: await service.todos() });
+        return;
+      }
+      if (action === 'unschedule') {
+        await service.unscheduleTodo(String(body?.id ?? ''));
+        sendJson(res, 200, { ok: true, todos: await service.todos() });
+        return;
+      }
+      throw Error('待办动作只能是 list / add / remove / schedule / unschedule');
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: errorText(error) });
+    }
+  });
+
+  ctx.web.api(base + 'reminder/snooze', async (req: any, res: any, { signal }: { signal: AbortSignal }) => {
+    try {
+      const body = await readJson(req, signal);
+      if (!isValidDateKey(body?.date)) throw Error('日期格式应为 YYYY-MM-DD');
+      const id = String(body?.id ?? '');
+      if (!id) throw Error('缺少条目 ID');
+      const result = await reminder.snooze(body.date, id, Number(body?.minutes) || undefined);
+      sendJson(res, 200, { ok: true, ...result });
     } catch (error) {
       sendJson(res, 400, { ok: false, error: errorText(error) });
     }

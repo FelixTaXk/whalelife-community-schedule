@@ -157,6 +157,59 @@ export function registerTools(ctx: Context, service: ScheduleService, weather: W
   });
 
   ctx.tools.register({
+    name: 'schedule_todo',
+    description: '管理待办池：list 看未完成待办，add 加一条（可标「今天必须做」），schedule 排到某天（会找空档写进计划），done 标记完成，remove 删除。用户说「记个待办」「这件事今天必须做」「这周找个时间做」时用。',
+    schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'add', 'schedule', 'done', 'remove'], description: '操作类型' },
+        id: { type: 'string', description: '待办 ID（list 返回的 txxxx）' },
+        title: { type: 'string', description: '标题，最多 60 字' },
+        minutes: { type: 'integer', description: '预计分钟数 10–480，默认 30' },
+        priority: { type: 'string', enum: ['normal', 'must'], description: 'normal 普通；must 今天必须做，生成日程时优先' },
+        date: { type: 'string', description: 'schedule 操作用的日期 YYYY-MM-DD，省略就是今天' },
+        done: { type: 'boolean', description: 'done 操作：true 完成，false 恢复' },
+      },
+      required: ['action'],
+    },
+    danger: 'safe',
+    origin: { platform: '日程', action: '管理待办' },
+    run: async (args: any) => {
+      try {
+        const action = String(args?.action ?? 'list');
+        if (action === 'list') {
+          const items = await service.todos();
+          const open = items.filter((item) => item.status !== 'done');
+          if (!open.length) return '待办池是空的。';
+          return open.slice(0, 20).map((item) => `${item.id} · ${item.title} · ${item.minutes} 分钟${item.priority === 'must' ? ' · 今天必须做' : ''}${item.scheduledDate ? ` · 已排 ${item.scheduledDate}` : ''}`).join('\n');
+        }
+        if (action === 'add') {
+          const item = await service.addTodo({ title: args?.title, minutes: args?.minutes, priority: args?.priority, note: args?.note });
+          return `已加入待办池：${item.id} · ${item.title} · ${item.minutes} 分钟。生成今天日程时会优先填空档。`;
+        }
+        if (action === 'schedule') {
+          const id = String(args?.id ?? '');
+          const plan = await service.scheduleTodo(pickDate(args?.date), id);
+          return `已排进 ${plan.date}。\n${formatPlan(plan, 'brief')}`;
+        }
+        if (action === 'done' || action === 'remove') {
+          const id = String(args?.id ?? '');
+          if (!id) throw Error('缺少待办 ID');
+          if (action === 'remove') {
+            await service.removeTodo(id);
+            return '已从待办池删除。';
+          }
+          const item = await service.completeTodo(id, args?.done !== false);
+          return item.status === 'done' ? `已完成「${item.title}」。` : `已恢复「${item.title}」。`;
+        }
+        throw Error('动作只能是 list / add / schedule / done / remove');
+      } catch (error) {
+        return `待办操作失败：${errorText(error)}`;
+      }
+    },
+  });
+
+  ctx.tools.register({
     name: 'schedule_edit',
     description: '改日程里的一项：add 加、update 改时间/标题、remove 删、status 标完成/跳过。改动会标记为手动编辑，自动重排不会覆盖它。改时间或加新项时注意不要和已有安排重叠。',
     schema: {

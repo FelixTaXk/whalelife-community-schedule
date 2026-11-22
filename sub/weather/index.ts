@@ -6,7 +6,7 @@ import { registerTools } from './lib/tools.ts';
 import { registerWeb } from './lib/web.ts';
 import { WEATHER_REQUEST_EVENT, WEATHER_SNAPSHOT_EVENT } from '../../lib/weather-types.ts';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

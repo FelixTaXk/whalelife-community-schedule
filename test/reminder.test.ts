@@ -32,7 +32,7 @@ function at(hour: number, minute: number): Date {
 }
 
 test('提醒窗口：提前 10 分钟进入，迟到 5 分钟后不再补发', () => {
-  const config = { ...defaultConfig().reminder, enabled: true, leadMinutes: 10 };
+  const config = { ...defaultConfig().reminder, enabled: true, leadMinutes: 10, leads: {} };
   assert.deepEqual(dueReminders(plan(), at(8, 49), config).map((x) => x.item.id), []);
   assert.deepEqual(dueReminders(plan(), at(8, 50), config).map((x) => x.item.id), ['work']);
   assert.deepEqual(dueReminders(plan(), at(9, 4), config).map((x) => x.item.id), ['work']);
@@ -40,7 +40,7 @@ test('提醒窗口：提前 10 分钟进入，迟到 5 分钟后不再补发', (
 });
 
 test('提醒窗口：自由空档和已完成的项目不提醒，起床最多提前 5 分钟', () => {
-  const config = { ...defaultConfig().reminder, enabled: true, leadMinutes: 10 };
+  const config = { ...defaultConfig().reminder, enabled: true, leadMinutes: 10, leads: {} };
   assert.deepEqual(dueReminders(plan(), at(6, 55), config).map((x) => x.item.id), ['wake']);
   assert.deepEqual(dueReminders(plan(), at(6, 54), config).map((x) => x.item.id), []);
   assert.deepEqual(dueReminders(plan(), at(13, 50), config).map((x) => x.item.id), []);
@@ -48,14 +48,14 @@ test('提醒窗口：自由空档和已完成的项目不提醒，起床最多�
 });
 
 test('安静时段跨午夜，收到窗口内不重复', () => {
-  const config = { ...defaultConfig().reminder, enabled: true, leadMinutes: 10, quietStart: '23:30', quietEnd: '06:30' };
+  const config = { ...defaultConfig().reminder, enabled: true, leadMinutes: 10, leads: {}, quietStart: '23:30', quietEnd: '06:30' };
   assert.deepEqual(dueReminders(plan(), at(23, 25), config).map((x) => x.item.id), ['sleep']);
   assert.deepEqual(dueReminders(plan(), at(23, 31), config).map((x) => x.item.id), []);
   assert.deepEqual(dueReminders(plan(), at(0, 20), config).map((x) => x.item.id), []);
 });
 
 test('模板文本包含时间、标题和地点', () => {
-  const config = { ...defaultConfig().reminder, enabled: true, leadMinutes: 10 };
+  const config = { ...defaultConfig().reminder, enabled: true, leadMinutes: 10, leads: {} };
   const due = dueReminders(plan(), at(8, 50), config)[0];
   assert.match(reminderText(due), /还有 10 分钟/);
   assert.match(reminderText(due), /09:00–12:00 上课（学校）/);

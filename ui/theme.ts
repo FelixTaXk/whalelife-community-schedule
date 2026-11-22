@@ -23,15 +23,18 @@ h1{font-size:26px;letter-spacing:-.5px;margin:0 0 4px;font-weight:650}
 h2{font-size:16px;margin:0 0 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 p.sub{margin:0;color:var(--muted);font-size:13px}
 .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:16px 0}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
-.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 18px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;align-items:start}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 18px;align-items:start}
 .wide{grid-column:1/-1}
-label{display:grid;gap:6px;font-size:13px;color:var(--muted)}
+label{display:grid;gap:6px;font-size:13px;color:var(--muted);min-width:0}
 label.check{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:14px}
-input,select,textarea{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);width:100%}
-textarea{min-height:88px;resize:vertical;font-family:inherit}
+input,select,textarea{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);width:100%;height:40px;min-width:0;box-sizing:border-box;line-height:1.5;vertical-align:middle}
+textarea{min-height:88px;height:auto;resize:vertical;font-family:inherit}
 input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent)}
-input[type=time]{font-family:inherit}
+input[type=radio]{width:16px;height:16px;accent-color:var(--accent)}
+input[type=time],input[type=date]{font-family:inherit}
+select{cursor:pointer}
+input[type=number]{font-variant-numeric:tabular-nums}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
 button{font:inherit;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);cursor:pointer}
 button:hover{border-color:var(--accent)}

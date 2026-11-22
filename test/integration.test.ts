@@ -77,12 +77,14 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   assert.deepEqual(pages.map((entry: any) => [entry.path, entry.settings, entry.navigation]), [
     ['/plugins/schedule/settings', true, false],
     ['/plugins/schedule/calendar', false, true],
+    ['/plugins/schedule/calendar.ics', false, false],
+    ['/plugins/schedule/config/export', false, false],
   ]);
 
   const settings = await request('/plugins/schedule/settings');
   assert.equal(settings.status, 200);
   const settingsHtml = await settings.text();
-  assert.match(settingsHtml, /v0\.6\.0/, '设置页版本号应从 plugin.yaml 读取');
+  assert.match(settingsHtml, /v0\.7\.0/, '设置页版本号应从 plugin.yaml 读取');
   assert.match(settingsHtml, /日程/);
   assert.match(settingsHtml, /主动提醒/);
   assert.match(settingsHtml, /reminderEnabled/);
@@ -134,7 +136,7 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   assert.equal(saved.items[0].status, 'done');
 
   const toolNames = app.tools.list().map((tool: any) => tool.function.name).filter((name: string) => name.startsWith('schedule_'));
-  assert.deepEqual(toolNames.sort(), ['schedule_edit', 'schedule_exception', 'schedule_generate', 'schedule_now', 'schedule_range', 'schedule_today']);
+  assert.deepEqual(toolNames.sort(), ['schedule_edit', 'schedule_exception', 'schedule_generate', 'schedule_now', 'schedule_range', 'schedule_today', 'schedule_todo']);
   const todayText = String((await app.tools.call('schedule_today', {}, { permission: 'full' })).result);
   assert.match(todayText, /起床/);
   const nowText = String((await app.tools.call('schedule_now', {}, { permission: 'full' })).result);

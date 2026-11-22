@@ -13,6 +13,7 @@ import {
 import { weeklyReview, weekStartOf } from '../lib/review.ts';
 import { generatePlan } from '../lib/plan.ts';
 import { normalizeConfig } from '../lib/types.ts';
+import { PRESETS, presetIdOfRoutine } from '../lib/types.ts';
 import { applyException, makeException } from '../lib/exceptions.ts';
 import type { ExceptionDay } from '../lib/exceptions.ts';
 import type { Plan, PlanItem } from '../lib/types.ts';
@@ -37,6 +38,13 @@ function plan(date: string, items: PlanItem[], extra: Partial<Plan> = {}): Plan 
     ...extra,
   };
 }
+
+test('模板识别：未改动的预设能自动选中，改动后显示自定义', () => {
+  for (const preset of PRESETS) assert.equal(presetIdOfRoutine(normalizeConfig({ routine: preset.routine }).routine), preset.id);
+  const custom = normalizeConfig({}).routine;
+  custom.wake = '05:59';
+  assert.equal(presetIdOfRoutine(custom), '');
+});
 
 test('重复规则：解析固定安排写法并统一输出', () => {
   const when = parseFixedWhen('双周 1,3,5 @2026-11-16 !2026-12-01');

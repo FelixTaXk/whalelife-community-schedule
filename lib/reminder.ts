@@ -5,7 +5,7 @@ import type { ReminderConfig, Plan, PlanItem } from './types.ts';
 import type { ScheduleService } from './service.ts';
 import { dateKey, minuteOfDay, parseHHMM } from './time.ts';
 
-export const REMINDER_KINDS = ['routine', 'work', 'study', 'commute', 'meal', 'exercise', 'fixed', 'travel', 'sleep'] as const;
+export const REMINDER_KINDS = ['routine', 'work', 'study', 'commute', 'meal', 'exercise', 'fixed', 'travel', 'sleep', 'todo'] as const;
 const REMINDER_KINDS_SET = new Set<string>(REMINDER_KINDS);
 const LATE_GRACE_MINUTES = 5;
 
@@ -31,6 +31,15 @@ type ReminderState = {
   date: string;
   sent: Record<string, ReminderRecord>;
   count: number;
+  /** 用户点过“稍后提醒”的一次性提醒；到点后由 tick 发送。 */
+  snoozed?: Record<string, SnoozeRecord>;
+};
+
+type SnoozeRecord = {
+  key: string;
+  itemId: string;
+  text: string;
+  dueAt: string;
 };
 
 function emptyState(date: string): ReminderState {
@@ -56,6 +65,7 @@ function inQuietHours(now: Date, start: string, end: string): boolean {
 /** 到点前 lead 分钟进入窗口；迟到超过 5 分钟就不补发，避免打开软件后收到一串旧提醒。 */
 export function dueReminders(plan: Plan, now: Date, config: ReminderConfig): ReminderDue[] {
   if (!config.enabled) return [];
+  if (isRestDay(plan) && config.restDaySilent) return [];
   if (inQuietHours(now, config.quietStart, config.quietEnd)) return [];
   const current = minuteOfDay(now);
   const out: ReminderDue[] = [];
@@ -63,7 +73,8 @@ export function dueReminders(plan: Plan, now: Date, config: ReminderConfig): Rem
     if (item.status !== 'pending' || !REMINDER_KINDS_SET.has(item.kind)) continue;
     const start = parseHHMM(item.start);
     if (start === null) continue;
-    const lead = item.kind === 'routine' ? Math.min(5, config.leadMinutes) : config.leadMinutes;
+    const configLead = config.leads?.[item.kind] ?? config.leadMinutes;
+    const lead = item.kind === 'routine' ? Math.min(5, configLead) : configLead;
     const remindAt = Math.max(0, start - lead);
     if (current < remindAt || current > start + LATE_GRACE_MINUTES) continue;
     out.push({
@@ -77,6 +88,14 @@ export function dueReminders(plan: Plan, now: Date, config: ReminderConfig): Rem
   return out;
 }
 
+/** 节假日、异常日，或周末但完全没有正事/学习安排，视为休息日。 */
+export function isRestDay(plan: Plan): boolean {
+  if (plan.exception) return true;
+  if (plan.holiday) return true;
+  if (plan.weekday < 6) return false;
+  return !plan.items.some((item) => item.kind === 'work' || item.kind === 'study');
+}
+
 export function reminderText(reminder: ReminderDue): string {
     const title = clean(reminder.item.title, 24);
     const place = clean(reminder.item.place, 16);
@@ -84,8 +103,20 @@ export function reminderText(reminder: ReminderDue): string {
     return `提醒：${when} ${reminder.item.start}–${reminder.item.end} ${title}${place ? `（${place}）` : ''}`;
 }
 
-class ReminderStore {
-  private ctx: Context;
+function normalizeSnoozed(value: unknown): Record<string, SnoozeRecord> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const out: Record<string, SnoozeRecord> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    if (typeof record.key !== 'string' || typeof record.text !== 'string' || typeof record.dueAt !== 'string') continue;
+    if (!record.dueAt) continue;
+    out[key] = { key: record.key, itemId: String(record.itemId ?? ''), text: record.text.slice(0, 240), dueAt: record.dueAt };
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+class ReminderStore {  private ctx: Context;
 
   constructor(ctx: Context) {
     this.ctx = ctx;
@@ -106,7 +137,7 @@ class ReminderStore {
         ...(value.uncertain ? { uncertain: true } : {}),
       };
     }
-    return { version: 1, date, sent, count: Number.isSafeInteger(raw.count) && raw.count >= 0 ? raw.count : 0 };
+    return { version: 1, date, sent, count: Number.isSafeInteger(raw.count) && raw.count >= 0 ? raw.count : 0, snoozed: normalizeSnoozed(raw.snoozed) };
   }
 
   async write(date: string, state: ReminderState): Promise<void> {
@@ -190,11 +221,15 @@ export class ReminderService {
     const date = dateKey(now);
     const plan = await this.schedule.read(date);
     if (!plan) return;
-    const due = dueReminders(plan, now, this.config);
-    if (!due.length) return;
     this.sending = true;
     try {
       const state = await this.store.read(date);
+      await this.flushSnoozed(plan, state, now, date);
+      const due = dueReminders(plan, now, this.config);
+      if (!due.length) {
+        await this.store.write(date, state);
+        return;
+      }
       for (const reminder of due) {
         const previous = state.sent[reminder.key];
         if (previous?.status === 'sent') continue;
@@ -238,12 +273,84 @@ export class ReminderService {
         }
         await this.store.write(date, state);
       }
+      await this.store.write(date, state);
     } catch (error) {
       this.lastError = errorText(error);
       this.ctx.logger.warn('日程主动提醒失败', { error: this.lastError });
     } finally {
       this.sending = false;
     }
+  }
+
+  /** 从日程条目点“稍后提醒”：持久化一条延后提醒，完成/删除条目后自动作废。 */
+  async snooze(date: string, itemId: string, minutes = this.config.snoozeMinutes): Promise<{ dueAt: string }> {
+    const plan = await this.schedule.read(date);
+    if (!plan) throw Error('这天还没有日程');
+    const item = plan.items.find((entry) => entry.id === itemId);
+    if (!item) throw Error('没有找到这条安排');
+    if (item.status === 'done' || item.status === 'skipped') throw Error('这条已经结束，不用再提醒');
+    const delay = Math.min(120, Math.max(1, Math.round(Number(minutes) || this.config.snoozeMinutes)));
+    const now = this.now();
+    const due = new Date(now.getTime() + delay * 60_000);
+    const dueAt = due.toISOString();
+    const title = clean(item.title, 24);
+    const place = clean(item.place, 16);
+    const text = `稍后提醒：${item.start}–${item.end} ${title}${place ? `（${place}）` : ''}（原定 ${item.start}）`;
+    const state = await this.store.read(date);
+    const key = `snooze:${date}:${itemId}:${dueAt}`;
+    state.snoozed = { ...(state.snoozed ?? {}), [key]: { key, itemId, text, dueAt } };
+    await this.store.write(date, state);
+    return { dueAt };
+  }
+
+  private async flushSnoozed(plan: Plan, state: ReminderState, now: Date, date: string): Promise<void> {
+    const entries = Object.values(state.snoozed ?? {}).sort((left, right) => left.dueAt.localeCompare(right.dueAt));
+    if (!entries.length) return;
+    let changed = false;
+    for (const entry of entries) {
+      const item = plan.items.find((value) => value.id === entry.itemId);
+      if (!item || item.status === 'done' || item.status === 'skipped') {
+        delete state.snoozed![entry.key];
+        changed = true;
+        continue;
+      }
+      if (new Date(entry.dueAt).getTime() > now.getTime()) continue;
+      if (state.sent[entry.key]) {
+        delete state.snoozed![entry.key];
+        changed = true;
+        continue;
+      }
+      if (state.count >= this.config.maxPerDay) {
+        this.lastError = `今天主动提醒已达到上限 ${this.config.maxPerDay} 条`;
+        break;
+      }
+      try {
+        const status = await this.deliver({
+          channel: this.config.channel,
+          account: this.config.account,
+          peer: this.config.peer,
+          messageId: `schedule-snooze:${date}:${entry.itemId}:${entry.dueAt}`,
+          text: entry.text,
+        });
+        state.sent[entry.key] = {
+          status: 'sent',
+          at: new Date().toISOString(),
+          attempts: 1,
+          text: entry.text,
+          ...(status === 'uncertain' ? { uncertain: true } : {}),
+        };
+        state.count += 1;
+        this.lastSentAt = new Date().toISOString();
+        this.lastError = '';
+      } catch (error) {
+        state.sent[entry.key] = { status: 'failed', at: new Date().toISOString(), attempts: 1, text: entry.text, error: errorText(error) };
+        this.lastError = errorText(error);
+      }
+      delete state.snoozed![entry.key];
+      changed = true;
+      await this.store.write(date, state);
+    }
+    if (changed) await this.store.write(date, state);
   }
 
   private async compose(plan: Plan, reminder: ReminderDue): Promise<string> {

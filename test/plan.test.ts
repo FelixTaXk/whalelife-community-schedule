@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { generatePlan, autoGaps, routineHash } from '../lib/plan.ts';
 import { parseAiPayload } from '../lib/ai.ts';
-import { defaultConfig, normalizeConfig, normalizeRoutine, parseFixedText, PRESETS } from '../lib/types.ts';
+import { defaultConfig, normalizeConfig, normalizeRoutine, parseFixedText, PRESETS, presetIdOfRoutine } from '../lib/types.ts';
 import { ScheduleService } from '../lib/service.ts';
 import { parseHHMM, formatHHMM } from '../lib/time.ts';
 
@@ -134,6 +134,27 @@ test('固定安排文本解析与报错', () => {
   assert.deepEqual(parsed.items[0].days, [1, 3, 5]);
   assert.deepEqual(parsed.items[1].days, [6, 7]);
   assert.equal(parsed.errors.length, 2);
+});
+
+test('待办池：整段放得下才插入空档，不切开也不重叠', () => {
+  const config = configFromPreset('office');
+  const plan = generatePlan(config, '2026-11-23', null, null, [
+    { id: 't1', title: '整理报销单', minutes: 45 },
+    { id: 't2', title: '预约体检', minutes: 30 },
+    { id: 't3', title: '永远放不下', minutes: 600 },
+  ]);
+  const todos = plan.items.filter((item) => item.kind === 'todo');
+  assert.equal(todos.length, 2);
+  assert.deepEqual(todos.map((item) => item.todoId).sort(), ['t1', 't2']);
+  assert.equal(todos.find((item) => item.todoId === 't1')?.title, '整理报销单');
+  assertNoOverlap(plan.items);
+});
+
+test('模板识别：未改动的预设能自动选中，改动后显示自定义', () => {
+  for (const preset of PRESETS) assert.equal(presetIdOfRoutine(normalizeConfig({ routine: preset.routine }).routine), preset.id);
+  const custom = normalizeConfig({}).routine;
+  custom.wake = '05:59';
+  assert.equal(presetIdOfRoutine(custom), '');
 });
 
 test('服务：生成、补齐、编辑与防重叠', async () => {

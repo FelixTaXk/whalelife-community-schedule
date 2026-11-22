@@ -1,7 +1,7 @@
 /*! 日程 plugin · 天气规则：把预报翻译成排程上的具体调整（纯函数）。 */
 
 import type { Plan, PlanItem, Routine } from './types.ts';
-import type { WeatherDay } from './weather-types.ts';
+import type { WeatherDay, WeatherHour } from './weather-types.ts';
 import { parseHHMM } from './time.ts';
 
 const OUTDOOR_WORDS = [
@@ -147,5 +147,80 @@ export function applyWeatherRules(plan: Plan, day: WeatherDay | null | undefined
     weather: day,
     weatherKey: weatherKey(day),
     ...(adjusted.length ? { weatherAdjusted: adjusted.slice(0, 6) } : {}),
+  };
+}
+
+/** 逐小时：给通勤/户外/旅行标注降水最低的时段，不改动已有占位。 */
+export function applyHourlyRules(plan: Plan, hours: WeatherHour[] | undefined, day: WeatherDay | null | undefined): Plan {
+  if (!hours?.length || !day) return plan;
+  const today = hours.filter((entry) => entry.date === plan.date && entry.hour >= 6 && entry.hour <= 23);
+  if (!today.length) return plan;
+  const items: PlanItem[] = plan.items.map((item) => ({ ...item }));
+  const adjusted: string[] = [...(plan.weatherAdjusted ?? [])];
+  const add = (text: string) => {
+    if (text && !adjusted.includes(text)) adjusted.push(text);
+  };
+  const windowAt = (start: number, minutes: number) => {
+    const end = start + minutes;
+    const slice = today.filter((entry) => entry.hour >= Math.floor(start / 60) && entry.hour < Math.ceil(end / 60));
+    if (!slice.length) return null;
+    return {
+      probability: Math.max(...slice.map((entry) => entry.precipitationProbability)),
+      precipitation: Math.max(...slice.map((entry) => entry.precipitation)),
+    };
+  };
+  const best = (minutes: number): WeatherHour | null => {
+    let pick: WeatherHour | null = null;
+    let score = Infinity;
+    for (const entry of today) {
+      if (entry.hour < 8 || entry.hour > 20) continue;
+      const info = windowAt(entry.hour * 60, minutes);
+      if (!info) continue;
+      const value = info.probability * 2 + info.precipitation * 10 + Math.abs(entry.hour - 15) * 2;
+      if (value < score) {
+        score = value;
+        pick = entry;
+      }
+    }
+    return pick;
+  };
+
+  for (const item of items) {
+    const start = parseHHMM(item.start);
+    if (start === null) continue;
+    const duration = Math.max(30, (parseHHMM(item.end) ?? start + 60) - start);
+    if (item.kind === 'commute' || item.kind === 'travel') {
+      const info = windowAt(start, duration);
+      if (info && info.probability >= 30) {
+        item.note = appendNote(item.note, `这个时段降水 ${info.probability}%，带伞并多留 10 分钟`);
+        add(`${item.start} ${item.title} 有降水`);
+      }
+      continue;
+    }
+    const outdoor = item.kind === 'exercise' || looksOutdoor(item.title);
+    if (!outdoor || looksIndoor(item.title)) continue;
+    const current = windowAt(start, duration);
+    if (!current || current.probability < 30) continue;
+    const target = best(Math.min(120, duration));
+    if (!target) continue;
+    item.note = appendNote(item.note, `户外段可挪到 ${String(target.hour).padStart(2, '0')}:00 附近，降水 ${target.precipitationProbability}%`);
+    add(`${item.title} 挪到降水低的时段`);
+  }
+
+  let travel = plan.travel;
+  if (travel?.itinerary) {
+    const target = best(60);
+    if (target && target.precipitationProbability <= 30) {
+      const tip = `如果出门，优先 ${String(target.hour).padStart(2, '0')}:00–${String((target.hour + 1) % 24).padStart(2, '0')}:00（降水 ${target.precipitationProbability}%）。`;
+      travel = { ...travel, itinerary: { ...travel.itinerary, backup: `${travel.itinerary.backup} ${tip}`.slice(0, 220) } };
+    }
+  }
+
+  return {
+    ...plan,
+    items,
+    travel,
+    hourly: today,
+    ...(adjusted.length ? { weatherAdjusted: adjusted.slice(0, 8) } : {}),
   };
 }

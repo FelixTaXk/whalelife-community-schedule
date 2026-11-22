@@ -37,8 +37,9 @@ export class WeatherBridge {
         error: typeof payload?.error === 'string' ? payload.error : undefined,
       });
     });
-    // 启动时探一次，尽早把天气放进本地缓存；不阻塞日程加载。
+    // 启动时探一次；子插件可能还没加载，就绪后再探一次，尽早把天气放进本地缓存。
     void bridge.probe().catch(() => undefined);
+    ctx.on('whalelife/ready', () => { void bridge.probe().catch(() => undefined); });
     return bridge;
   }
 
@@ -96,9 +97,9 @@ export class WeatherBridge {
     });
   }
 
-  /** 页面/设置用：最多等 900 毫秒，顺便判断子插件是否在线。 */
+  /** 页面/设置用：最多等 1.2 秒，顺便判断子插件是否在线。 */
   async probe(): Promise<WeatherSnapshot | null> {
-    return this.request(false, 900);
+    return this.request(false, 1200);
   }
 
   /** 日历用：最多等 350 毫秒，拿不到就用上次缓存，不拖慢日程。 */
@@ -106,9 +107,9 @@ export class WeatherBridge {
     return this.request(false, 350);
   }
 
-  /** 工具用：允许稍长等待；子插件在线时一般命中它的缓存，立刻返回。 */
+  /** 生成日程用：要盖住子插件的一次真实取数（含一次重试），慢一点也要拿到天气。 */
   async refresh(force = false): Promise<WeatherSnapshot | null> {
-    return this.request(force === true, 1500);
+    return this.request(force === true, 10000);
   }
 
   async day(date: string): Promise<WeatherDay | null> {
