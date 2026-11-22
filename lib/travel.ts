@@ -1,7 +1,8 @@
 /*! 日程 plugin · 周末短途与长假旅行安排（纯函数）。 */
 
 import type { HolidayDay, DayInfo } from './holidays.ts';
-import type { TravelConfig, TravelSource, TravelSpot } from './types.ts';
+import type { Plan, TravelConfig, TravelSource, TravelSpot, TravelItinerary } from './types.ts';
+import type { WeatherDay } from './weather-types.ts';
 import { addDays, hashSeed, parseDateKey } from './time.ts';
 
 export type TravelMode = 'weekend' | 'short' | 'long';
@@ -141,8 +142,7 @@ export function resolveTravel(
   info: DayInfo,
   date: string,
   override?: TravelOverride | null,
-): TravelDecision | null {
-  const mode = modeOf(info, config);
+): TravelDecision | null {  const mode = modeOf(info, config);
   if (!mode) return null;
   let candidates = travelCandidates(config, info, date);
   if (!candidates.length) return null;
@@ -186,5 +186,73 @@ export function resolveTravel(
     title: `旅行 · ${spot.name}`,
     place: spot.name,
     note: `${label}${spot.note ? ` · ${spot.note}` : ''}`,
+  };
+}
+
+function money(currency: string): string {
+  const code = currency.trim().toUpperCase();
+  if (code === 'CNY' || code === 'RMB') return '¥';
+  if (code === 'USD') return '$';
+  if (code === 'EUR') return '€';
+  if (code === 'JPY') return '¥';
+  if (code === 'GBP') return '£';
+  return code ? `${code} ` : '';
+}
+
+/** 按当天旅行块生成可执行的行程骨架；所有内容都来自配置与天气，不写死城市。 */
+export function buildItinerary(
+  travel: { destination: string; dayIndex: number; days: number },
+  config: TravelConfig,
+  weather?: WeatherDay | null,
+): TravelItinerary {
+  const { destination, dayIndex, days } = travel;
+  const last = dayIndex >= days - 1;
+  const first = dayIndex === 0;
+  const transport = first
+    ? (days === 1
+      ? `当天往返：出发地 → ${destination}，尽量赶早班，返程前留出 1 小时缓冲。`
+      : `去程：出发地 → ${destination}；按实际班次提前 30 分钟到站/机场，先放行李再开始下午的行程。`)
+    : last
+      ? `返程：${destination} → 回程；提前 2 小时退房，确认末班车/航班和到家的接驳。`
+      : `市内移动：${destination} 按片区走，少折返；跨区先查首末班和打车大概时长。`;
+  const lodging = last
+    ? '住宿：返程日不订新住处；退房后先寄存行李，再安排轻装活动。'
+    : `住宿：${destination} 第 ${dayIndex + 1} 晚；优先可免费取消、靠近次日第一站的住处，入住前确认前台时间。`;
+  const checklist = [
+    '证件、门票和交通预订凭证（离线也存一份）',
+    '手机充电器、充电宝、转换插头',
+    '常用药和创可贴',
+    days > 1 ? '换洗衣物和洗漱包' : '轻装、随身小包',
+    first ? '出发前确认班次、值机和检票时间' : '',
+    last ? '退房前检查充电器、证件和行李' : '',
+    weather && weather.precipitationProbability >= 40 ? '折叠伞或防水外套' : '',
+    weather && weather.max >= 30 ? '防晒霜、帽子和补水' : '',
+    weather && weather.min <= 10 ? '外套或薄羽绒' : '',
+  ].filter(Boolean).slice(0, 8);
+  const symbol = money(config.currency);
+  let budget = '';
+  if (config.budget > 0) {
+    const perDay = Math.round(config.budget / Math.max(1, days));
+    budget = `整趟 ${symbol}${config.budget}（${days} 天）· 今天约 ${symbol}${perDay}；`
+      + `交通 ${symbol}${Math.round(perDay * 0.4)}、住宿 ${symbol}${Math.round(perDay * 0.3)}、餐饮 ${symbol}${Math.round(perDay * 0.2)}、门票 ${symbol}${Math.round(perDay * 0.1)}。`;
+  } else {
+    budget = '整趟预算还没填（设置 → 旅行 → 总预算）；先按交通 40%、住宿 30%、餐饮 20%、门票 10% 预留。';
+  }
+  const rain = weather && (weather.precipitationProbability >= 40 || /雨|雪|雷/.test(weather.text ?? ''));
+  const backup = rain
+    ? `今天有降水（${weather?.precipitationProbability ?? 0}%）：户外段换成室内（博物馆/商场/书店），必须户外的挪到降水最低的 2 小时。`
+    : '天气不好时：户外段换成室内（博物馆/商场/书店），必须户外的挪到降水最低的 2 小时；出发前一晚按小时预报重排。';
+  return { transport, lodging, checklist, budget, backup };
+}
+
+/** 把行程单挂到当天计划；已经存在的不重算，手动改动不会被覆盖。 */
+export function attachItinerary(plan: Plan, config: TravelConfig, weather?: WeatherDay | null): Plan {
+  if (!plan.travel || plan.travel.itinerary) return plan;
+  return {
+    ...plan,
+    travel: {
+      ...plan.travel,
+      itinerary: buildItinerary(plan.travel, config, weather),
+    },
   };
 }

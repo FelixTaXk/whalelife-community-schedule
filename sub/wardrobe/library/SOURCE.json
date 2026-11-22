@@ -1,0 +1,26 @@
+{
+  "repository": "https://github.com/paipiange/nvzhuang",
+  "commit": "a82486c298e668780c206d8c46af48fc0ca18627",
+  "snapshot_date": "2026-10-29",
+  "records": 1407,
+  "license": "MIT",
+  "original_author": "paipiange",
+  "original_site": "https://paipiange.github.io/nvzhuang/",
+  "asset_base": "https://paipiange.github.io/nvzhuang/assets/",
+  "asset_versions": [
+    "thumbs",
+    "img"
+  ],
+  "local_original_versions": [
+    "png"
+  ],
+  "metadata_source": "https://github.com/wangweihong/ai-costume-gallery-zh",
+  "runtime_downloads": true,
+  "local_extra": {
+    "count": 24,
+    "ids": "HOM-0001..HOM-0024",
+    "source_tag": "local-homewear",
+    "style": "light grey seamless studio, headless/handless ghost mannequin, hollow garment, 1366x2048",
+    "backup": ".backup/homewear-v1"
+  }
+}

@@ -4,8 +4,8 @@ import { readdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Context } from '../../../core/context.ts';
-import type { Plan } from './types.ts';
-import { isPlan } from './types.ts';
+import type { Plan, TodoItem } from './types.ts';
+import { isPlan, normalizeTodo } from './types.ts';
 import type { ExceptionDay } from './exceptions.ts';
 import { isException } from './exceptions.ts';
 import type { TravelChoice } from './travel.ts';
@@ -138,5 +138,18 @@ export class Store {
     return Object.values(await this.exceptionMap())
       .filter((exception) => exception.date >= from && exception.date <= to)
       .sort((left, right) => left.date.localeCompare(right.date));
+  }
+
+  /** 待办池独立存放，跨天保留，不受日程文件清理影响。 */
+  async readTodos(): Promise<TodoItem[]> {
+    const raw = await this.ctx.config.read<unknown>('todos.json').catch(() => null);
+    if (!raw || typeof raw !== 'object') return [];
+    const items = (raw as Record<string, unknown>).items;
+    if (!Array.isArray(items)) return [];
+    return items.map(normalizeTodo).filter((item): item is TodoItem => item !== null);
+  }
+
+  async writeTodos(items: TodoItem[]): Promise<void> {
+    await this.ctx.config.save('todos.json', { version: 1, items });
   }
 }

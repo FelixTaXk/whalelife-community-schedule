@@ -13,6 +13,19 @@ export type WeatherNow = {
   isDay: boolean;
 };
 
+export type WeatherHour = {
+  /** 本地时间 YYYY-MM-DDTHH:00。 */
+  time: string;
+  date: string;
+  hour: number;
+  temperature: number;
+  precipitation: number;
+  precipitationProbability: number;
+  code: number;
+  text: string;
+  icon: string;
+};
+
 export type WeatherDay = {
   date: string;
   code: number;
@@ -39,6 +52,8 @@ export type WeatherSnapshot = {
   updatedAt: string;
   now: WeatherNow | null;
   days: WeatherDay[];
+  /** 逐小时预报，最多 72 小时；父插件排户外/通勤用。 */
+  hours?: WeatherHour[];
   error?: string;
 };
 

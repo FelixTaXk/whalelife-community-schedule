@@ -1,16 +1,16 @@
 /*! 日程 plugin · 配置数据结构、默认作息与校验。 */
 
-import type { WeatherDay } from './weather-types.ts';
+import type { WeatherDay, WeatherHour } from './weather-types.ts';
 import { fixedWhenText, normalizeRepeat, occursOn, parseFixedWhen, repeatInput } from './recurrence.ts';
 import { clamp, formatHHMM, isTime, isValidDateKey, parseHHMM } from './time.ts';
 
 export type BlockKind =
   | 'routine' | 'meal' | 'commute' | 'work' | 'study'
-  | 'exercise' | 'free' | 'chore' | 'rest' | 'social' | 'fixed' | 'travel' | 'sleep';
+  | 'exercise' | 'free' | 'chore' | 'rest' | 'social' | 'fixed' | 'travel' | 'sleep' | 'todo';
 
 export const BLOCK_KINDS: readonly BlockKind[] = [
   'routine', 'meal', 'commute', 'work', 'study',
-  'exercise', 'free', 'chore', 'rest', 'social', 'fixed', 'travel', 'sleep',
+  'exercise', 'free', 'chore', 'rest', 'social', 'fixed', 'travel', 'sleep', 'todo',
 ];
 
 export const KIND_LABEL: Record<BlockKind, string> = {
@@ -27,6 +27,7 @@ export const KIND_LABEL: Record<BlockKind, string> = {
   fixed: '固定',
   travel: '旅行',
   sleep: '睡觉',
+  todo: '待办',
 };
 
 export type WorkRoutine = {
@@ -76,6 +77,9 @@ export type Routine = {
 
 export type AiConfig = { enabled: boolean; model: string; style: string };
 
+/** 只读 ICS 订阅：关闭时只能手动下载，开启时在本机起一个带随机令牌的 HTTP 出口。 */
+export type IcsConfig = { enabled: boolean; port: number };
+
 export type ReminderConfig = {
   enabled: boolean;
   channel: string;
@@ -87,6 +91,12 @@ export type ReminderConfig = {
   quietStart: string;
   quietEnd: string;
   usePersona: boolean;
+  /** 按事项类型单独提前分钟；缺省用 leadMinutes。 */
+  leads: Record<string, number>;
+  /** 休息日/节假日是否跳过提醒。 */
+  restDaySilent: boolean;
+  /** 稍后提醒的默认延后分钟。 */
+  snoozeMinutes: number;
 };
 
 export type HolidayKind = 'statutory' | 'student' | 'custom';
@@ -142,6 +152,17 @@ export type TravelConfig = {
   targetTo: string;
   style: string;
   spots: TravelSpot[];
+  /** 整趟旅行的总预算；0 表示未填，只给分配建议。 */
+  budget: number;
+  /** ISO 货币代码或常用符号；默认 CNY。 */
+  currency: string;
+};
+
+/** 地区与显示习惯：周起始日、界面语言、时区。时区留空时跟随系统。 */
+export type RegionConfig = {
+  weekStart: number;
+  language: 'zh-CN' | 'en-US';
+  timezone: string;
 };
 
 export type Config = {
@@ -154,6 +175,8 @@ export type Config = {
   reminder: ReminderConfig;
   holiday: HolidayConfig;
   travel: TravelConfig;
+  ics: IcsConfig;
+  region: RegionConfig;
   routine: Routine;
 };
 
@@ -170,11 +193,66 @@ export type PlanItem = {
   status: ItemStatus;
   /** 自动铺进空档的自由安排，模型润色时可以整段替换。 */
   auto?: boolean;
+  /** 来自待办池的条目 ID，用于完成时回写待办状态。 */
+  todoId?: string;
+  /** 重复规则：weekly / biweekly@YYYY-MM-DD / monthly:N / !YYYY-MM-DD。 */
+  repeat?: string;
+};
+
+/** 待办池条目：pool 未排期，scheduled 已绑定某天，done 已完成。 */
+export type TodoItem = {
+  id: string;
+  title: string;
+  minutes: number;
+  priority: 'normal' | 'must';
+  status: 'pool' | 'scheduled' | 'done';
+  createdAt: string;
+  scheduledDate?: string;
+  note?: string;
+};
+
+/** 生成日程时可放进空档的待办摘要。 */
+export type TodoBlock = { id: string; title: string; minutes: number };
+
+export function isTodoItem(value: unknown): value is TodoItem {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.id === 'string'
+    && item.id.length > 0
+    && typeof item.title === 'string'
+    && item.title.length > 0
+    && typeof item.minutes === 'number'
+    && Number.isFinite(item.minutes)
+    && (item.priority === 'normal' || item.priority === 'must')
+    && (item.status === 'pool' || item.status === 'scheduled' || item.status === 'done')
+    && typeof item.createdAt === 'string';
+}
+
+export function normalizeTodo(value: unknown): TodoItem | null {
+  if (!isTodoItem(value)) return null;
+  return {
+    id: value.id.slice(0, 40),
+    title: value.title.trim().slice(0, 60),
+    minutes: integer(value.minutes, 30, 10, 480),
+    priority: value.priority === 'must' ? 'must' : 'normal',
+    status: value.status,
+    createdAt: value.createdAt.slice(0, 40),
+    scheduledDate: typeof value.scheduledDate === 'string' && isValidDateKey(value.scheduledDate) ? value.scheduledDate : undefined,
+    note: typeof value.note === 'string' ? value.note.trim().slice(0, 120) : undefined,
+  };
+}
+
+/** 旅行当天可执行的行程单；不写死城市和交通方式，只给可改的骨架。 */
+export type TravelItinerary = {
+  transport: string;
+  lodging: string;
+  checklist: string[];
+  budget: string;
+  backup: string;
 };
 
 export type Plan = {
-  version: 1;
-  date: string;
+  version: 1;  date: string;
   weekday: number;
   tone: string;
   note: string;
@@ -192,6 +270,8 @@ export type Plan = {
   weather?: WeatherDay;
   /** 只包含会影响排程的天气类别，用来判断预报变化后要不要重排。 */
   weatherKey?: string;
+  /** 当天逐小时天气，供页面和户外/通勤排程参考。 */
+  hourly?: WeatherHour[];
   /** 因天气做过的调整，展示在日程卡片和工具输出里。 */
   weatherAdjusted?: string[];
   /** 当天命中的法定/自定义假期；调休上班日会单独记在 workday。 */
@@ -210,6 +290,8 @@ export type Plan = {
     dayIndex: number;
     days: number;
     source: TravelSource;
+    /** 当天可执行的行程单：交通、住宿、清单、预算、坏天气备选。 */
+    itinerary?: TravelItinerary;
   };
   /** 当天是异常日时保留原因，方便复盘和展示。 */
   exception?: {
@@ -286,6 +368,15 @@ export const PRESETS: readonly Preset[] = [
   { id: 'freelance', name: '自由职业', hint: '在家干活，时间自己排', routine: FREELANCE_ROUTINE },
 ];
 
+/** 当前作息与哪个模板完全一致；被手动改过时返回空字符串。 */
+export function presetIdOfRoutine(routine: Routine): string {
+  const value = JSON.stringify(normalizeRoutine(routine));
+  for (const preset of PRESETS) {
+    if (JSON.stringify(normalizeRoutine(preset.routine)) === value) return preset.id;
+  }
+  return '';
+}
+
 export function defaultConfig(): Config {
   return {
     version: 1,
@@ -305,6 +396,9 @@ export function defaultConfig(): Config {
       quietStart: '23:30',
       quietEnd: '06:30',
       usePersona: true,
+      leads: { fixed: 10, work: 15, todo: 10 },
+      restDaySilent: true,
+      snoozeMinutes: 10,
     },
     holiday: { enabled: true, builtin: false, student: false, weekendDays: [6, 7], periods: [], workdays: [] },
     travel: {
@@ -319,7 +413,11 @@ export function defaultConfig(): Config {
       targetTo: '',
       style: '',
       spots: [],
+      budget: 0,
+      currency: 'CNY',
     },
+    ics: { enabled: false, port: 38765 },
+    region: { weekStart: 1, language: 'zh-CN', timezone: '' },
     routine: cloneRoutine(OFFICE_ROUTINE),
   };
 }
@@ -487,12 +585,13 @@ function normalizeTravelConfig(value: unknown, fallback: TravelConfig): TravelCo
     targetTo: targetFrom && targetTo && targetTo < targetFrom ? '' : targetTo,
     style: text(raw.style, 300),
     spots: normalizeTravelSpots(raw.spots),
+    budget: integer(raw.budget, fallback.budget ?? 0, 0, 1_000_000),
+    currency: text(raw.currency, 8) || fallback.currency || 'CNY',
   };
 }
 
 export function normalizeRoutine(value: unknown): Routine {
-  const base = cloneRoutine(OFFICE_ROUTINE);
-  if (!value || typeof value !== 'object') return base;
+  const base = cloneRoutine(OFFICE_ROUTINE);  if (!value || typeof value !== 'object') return base;
   const raw = value as Record<string, any>;
   const work = raw.work && typeof raw.work === 'object' ? raw.work : {};
   const lunch = raw.lunch && typeof raw.lunch === 'object' ? raw.lunch : {};
@@ -537,6 +636,15 @@ export function normalizeRoutine(value: unknown): Routine {
   };
 }
 
+function normalizeLeads(value: unknown, fallback: Record<string, number>): Record<string, number> {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const leads: Record<string, number> = { ...fallback };
+  for (const kind of BLOCK_KINDS) {
+    if (source[kind] !== undefined) leads[kind] = integer(source[kind], leads[kind] ?? 10, 0, 120);
+  }
+  return leads;
+}
+
 export function normalizeConfig(value: unknown, fallback: Config = defaultConfig()): Config {
   const raw = value && typeof value === 'object' ? (value as Record<string, any>) : {};
   const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
@@ -563,9 +671,21 @@ export function normalizeConfig(value: unknown, fallback: Config = defaultConfig
       quietStart: time(reminder.quietStart, fallback.reminder.quietStart),
       quietEnd: time(reminder.quietEnd, fallback.reminder.quietEnd),
       usePersona: bool(reminder.usePersona, fallback.reminder.usePersona),
+      leads: normalizeLeads(reminder.leads, fallback.reminder.leads),
+      restDaySilent: bool(reminder.restDaySilent, fallback.reminder.restDaySilent),
+      snoozeMinutes: integer(reminder.snoozeMinutes, fallback.reminder.snoozeMinutes, 1, 60),
     },
     holiday: normalizeHolidayConfig(raw.holiday, fallback.holiday),
     travel: normalizeTravelConfig(raw.travel, fallback.travel),
+    ics: {
+      enabled: bool(raw.ics?.enabled, fallback.ics?.enabled ?? false),
+      port: integer(raw.ics?.port, fallback.ics?.port ?? 38765, 1024, 65535),
+    },
+    region: {
+      weekStart: integer(raw.region?.weekStart, fallback.region?.weekStart ?? 1, 1, 7),
+      language: raw.region?.language === 'en-US' ? 'en-US' : 'zh-CN',
+      timezone: text(raw.region?.timezone, 40),
+    },
     routine: raw.routine === undefined ? cloneRoutine(fallback.routine) : normalizeRoutine(raw.routine),
   };
 }

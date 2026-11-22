@@ -1,7 +1,7 @@
 /*! 日程 · 天气子插件 · Open-Meteo 请求地址与响应解析。 */
 
 import type { WeatherConfig } from './config.ts';
-import type { WeatherDay, WeatherNow, WeatherSnapshot } from '../../../lib/weather-types.ts';
+import type { WeatherDay, WeatherHour, WeatherNow, WeatherSnapshot } from '../../../lib/weather-types.ts';
 import { codeInfo, dayTip, outdoorFriendly } from './wmo.ts';
 
 export function forecastUrl(config: WeatherConfig, latitude: number, longitude: number): string {
@@ -10,6 +10,7 @@ export function forecastUrl(config: WeatherConfig, latitude: number, longitude: 
     longitude: String(longitude),
     current: 'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m',
     daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max,sunrise,sunset',
+    hourly: 'temperature_2m,precipitation_probability,precipitation,weather_code,is_day',
     timezone: 'auto',
     forecast_days: String(config.forecastDays),
     temperature_unit: 'celsius',
@@ -92,6 +93,25 @@ export function parseForecast(
     }
   }
 
+  const hourly = source.hourly && typeof source.hourly === 'object' ? source.hourly as Record<string, any> : {};
+  const hourTimes = array(hourly.time).map(String);
+  const hours: WeatherHour[] = hourTimes.slice(0, 96).map((time, index) => {
+    const code = number(array(hourly.weather_code)[index], -1);
+    const info = codeInfo(code);
+    const value = time.includes('T') ? time.split('T') : [time, '00:00'];
+    return {
+      time,
+      date: value[0],
+      hour: number(value[1].slice(0, 2), 0),
+      temperature: number(array(hourly.temperature_2m)[index]),
+      precipitation: number(array(hourly.precipitation)[index], 0),
+      precipitationProbability: number(array(hourly.precipitation_probability)[index], 0),
+      code,
+      text: info.text,
+      icon: info.icon,
+    };
+  });
+
   return {
     version: 1,
     place: meta.place,
@@ -101,5 +121,6 @@ export function parseForecast(
     updatedAt: new Date().toISOString(),
     now,
     days,
+    ...(hours.length ? { hours } : {}),
   };
 }

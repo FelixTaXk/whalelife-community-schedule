@@ -1,7 +1,7 @@
 /*! 日程 plugin · 设置页。 */
 
 import type { Config } from '../lib/types.ts';
-import { PRESETS } from '../lib/types.ts';
+import { PRESETS, presetIdOfRoutine } from '../lib/types.ts';
 import { repeatInput } from '../lib/recurrence.ts';
 import { BASE_CSS, escapeHtml } from './theme.ts';
 
@@ -15,6 +15,7 @@ export type SettingsData = {
   models: Array<{ id: string; name: string; callable: boolean }>;
   status: { lastError: string; lastTickAt: string; reminderLastError?: string; reminderLastSentAt?: string };
   weather: { available: boolean; summary: string };
+  ics: { running: boolean; port: number; urls: string[] };
   today: string;
   version: string;
 };
@@ -35,8 +36,12 @@ function options(models: SettingsData['models'], selected: string): string {
 }
 
 export function settingsPage(data: SettingsData): string {
-  const { config: cfg, fixedText, hobbiesText, holidayText, holidayWorkdays, travelText, models, status } = data;
-  const presetOptions = PRESETS.map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)} · ${escapeHtml(preset.hint)}</option>`).join('');
+  const { config: cfg, fixedText, hobbiesText, holidayText, holidayWorkdays, travelText, models, status, ics } = data;
+  const currentPreset = presetIdOfRoutine(cfg.routine);
+  const presetOptions = [
+    `<option value=""${currentPreset ? '' : ' selected'}>自定义（当前作息）</option>`,
+    ...PRESETS.map((preset) => `<option value="${escapeHtml(preset.id)}"${preset.id === currentPreset ? ' selected' : ''}>${escapeHtml(preset.name)} · ${escapeHtml(preset.hint)}</option>`),
+  ].join('');
   const aiHint = models.length
     ? '开启后会调用所选模型，把空档换成具体安排（每次约一次请求，45 秒超时；失败保留规则骨架）。'
     : '当前没有可用的对话模型：先在 WhaleLife 的「模型」页配好一个 OpenAI 兼容的对话模型，再回来选。';
@@ -78,8 +83,8 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
   <h2>作息</h2>
   <div class="row" style="margin:0 0 14px">
     <select id="preset" style="max-width:340px">${presetOptions}</select>
-    <button type="button" id="applyPreset">套用模板</button>
-    <span class="hint" style="margin:0">模板会覆盖下面所有作息字段，AI 与保留天数不变。</span>
+    <button type="button" id="applyPreset"${currentPreset ? '' : ' disabled'}>套用模板</button>
+    <span class="hint" style="margin:0">${currentPreset ? '当前作息与所选模板一致。' : '当前作息是自定义，选择模板后可套用。'} 模板会覆盖下面所有作息字段，AI 与保留天数不变。</span>
   </div>
   <div class="grid3">
     <label>起床<input type="time" name="wake" value="${escapeHtml(cfg.routine.wake)}"></label>
@@ -149,6 +154,10 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
     <textarea name="holidayWorkdays" spellcheck="false" placeholder="2027-02-14&#10;2027-10-09">${escapeHtml(holidayWorkdays)}</textarea>
   </label>
   <p class="hint">默认不套用任何国家的节假日表；中国用户可打开内置表，其他地区用自定义假期和额外调休日。普通周末默认不排正事，按上面的「周末」和作息里的星期决定；调休上班日强制按工作日。寒暑假 / 春秋假没有全国统一日期，需要按学校日历填；内置表只到 2027 年，之后用自定义假期补。</p>
+  <div class="row" style="margin:10px 0 0">
+    <label class="button" style="cursor:pointer">导入节假日 ICS<input type="file" id="holidayIcs" accept=".ics,text/calendar" style="display:none"></label>
+    <span class="hint" style="margin:0">支持 Google/Apple/Outlook 导出的全天事件，导入后写成自定义假期；不会联网。</span>
+  </div>
 </section>
 
 <section class="card">
@@ -163,6 +172,8 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
     <label>指定目的地（可空，优先于地点池和 AI）<input type="text" name="travelTarget" maxlength="24" value="${escapeHtml(cfg.travel.target)}" placeholder="例如：想去的地方"></label>
     <label>指定从<input type="date" name="travelTargetFrom" value="${escapeHtml(cfg.travel.targetFrom)}"></label>
     <label>指定到<input type="date" name="travelTargetTo" value="${escapeHtml(cfg.travel.targetTo)}"></label>
+    <label>总预算（0 = 只给分配建议）<input type="number" name="travelBudget" min="0" max="1000000" value="${cfg.travel.budget}"></label>
+    <label>货币<input type="text" name="travelCurrency" maxlength="8" value="${escapeHtml(cfg.travel.currency)}" placeholder="CNY / USD / EUR"></label>
     <label class="wide">旅行偏好（可空）<textarea name="travelStyle" maxlength="300" placeholder="例如：喜欢自然风景和博物馆，少爬山；周末车程不超过 2 小时；长假可以坐高铁。">${escapeHtml(cfg.travel.style)}</textarea></label>
   </div>
   <label>地点池（每行：地点 | 近/远 | 最少天 | 最多天 | 指定日期段(可空) | 备注）
@@ -188,17 +199,55 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
     <label>渠道 ID（目前只支持 qq）<input type="text" name="reminderChannel" maxlength="40" value="${escapeHtml(cfg.reminder.channel)}" placeholder="qq"></label>
     <label>账号（QQ 可空）<input type="text" name="reminderAccount" maxlength="40" value="${escapeHtml(cfg.reminder.account)}" placeholder="非 QQ 渠道才需要"></label>
     <label>联系人 peer<input type="text" name="reminderPeer" maxlength="80" value="${escapeHtml(cfg.reminder.peer)}" placeholder="direct:你的QQ号"></label>
-    <label>提前分钟<input type="number" name="reminderLead" min="0" max="60" value="${cfg.reminder.leadMinutes}"></label>
+    <label>提前分钟（默认）<input type="number" name="reminderLead" min="0" max="60" value="${cfg.reminder.leadMinutes}"></label>
+    <label>正事提前<input type="number" name="reminderLeadWork" min="0" max="120" value="${cfg.reminder.leads?.work ?? cfg.reminder.leadMinutes}"></label>
+    <label>固定安排提前<input type="number" name="reminderLeadFixed" min="0" max="120" value="${cfg.reminder.leads?.fixed ?? cfg.reminder.leadMinutes}"></label>
+    <label>待办提前<input type="number" name="reminderLeadTodo" min="0" max="120" value="${cfg.reminder.leads?.todo ?? cfg.reminder.leadMinutes}"></label>
+    <label>稍后提醒（分钟）<input type="number" name="reminderSnooze" min="1" max="60" value="${cfg.reminder.snoozeMinutes}"></label>
     <label>每天最多<input type="number" name="reminderMax" min="1" max="20" value="${cfg.reminder.maxPerDay}"></label>
     <label>安静开始<input type="time" name="reminderQuietStart" value="${escapeHtml(cfg.reminder.quietStart)}"></label>
     <label>安静结束<input type="time" name="reminderQuietEnd" value="${escapeHtml(cfg.reminder.quietEnd)}"></label>
     <label>人格 ID（可空 = 宿主当前人格）<input type="text" name="reminderPersona" maxlength="40" value="${escapeHtml(cfg.reminder.persona)}" placeholder="留空即用当前人格"></label>
     <label class="check wide"><input type="checkbox" name="reminderUsePersona"${cfg.reminder.usePersona ? ' checked' : ''}> 用该人格的语气生成，不只是一句模板</label>
+    <label class="check wide"><input type="checkbox" name="reminderRestSilent"${cfg.reminder.restDaySilent ? ' checked' : ''}> 休息日、节假日和异常日不主动提醒</label>
   </div>
-  <p class="hint">只提醒起床、正事、通勤、三餐、运动、固定安排、旅行和睡觉；自由空档不提醒。QQ 私聊的 peer 一般写 <code>direct:对方QQ号</code>，账号可留空（用当前登录的 QQ）；目标没填全时不会发送。人格 ID 留空时使用宿主当前 Web 人格，填了就必须是已存在的人格。</p>
+  <p class="hint">只提醒起床、正事、通勤、三餐、运动、固定安排、旅行、待办和睡觉；自由空档不提醒。正事/固定安排/待办可以单独设提前分钟，其余用默认值。日历上每条安排都能点「稍后提醒」，完成后自动作废。QQ 私聊的 peer 一般写 <code>direct:对方QQ号</code>，账号可留空（用当前登录的 QQ）；目标没填全时不会发送。人格 ID 留空时使用宿主当前 Web 人格，填了就必须是已存在的人格。</p>
   ${status.reminderLastError ? `<div class="alert bad"><b>上次提醒失败</b><br>${escapeHtml(status.reminderLastError)}</div>` : ''}
   ${status.reminderLastSentAt ? `<p class="hint">上次主动提醒：${escapeHtml(new Date(status.reminderLastSentAt).toLocaleString('zh-CN'))}</p>` : ''}
   <div class="row" style="margin:10px 0 0"><button type="button" id="testReminder">发送测试提醒</button><span class="hint" style="margin:0">测试会立刻走一次当前渠道，不写日程提醒记录。</span></div>
+</section>
+
+<section class="card">
+  <h2>日历订阅 <span class="pill ${ics.running ? '' : 'warn'}">${ics.running ? '运行中 · 端口 ' + ics.port : '未开启'}</span></h2>
+  <div class="grid">
+    <label class="check wide"><input type="checkbox" name="icsEnabled"${cfg.ics.enabled ? ' checked' : ''}> 在本机开一个只读订阅地址，手机/电脑日历可以直接订阅</label>
+    <label>订阅端口<input type="number" name="icsPort" min="1024" max="65535" value="${cfg.ics.port}"></label>
+  </div>
+  <p class="hint">订阅地址带随机令牌，不需要登录宿主；只暴露已生成的日程，不能改数据。关闭开关后地址立即失效。端口被占用时会自动往后顺延，实际端口见上方徽标。手机和电脑不在同一局域网时，订阅地址不可达，请用下面的下载文件导入。</p>
+  ${ics.urls.length ? `<div class="grid">${ics.urls.map((url) => `<label class="wide">订阅地址<input type="text" readonly value="${escapeHtml(url)}" onclick="this.select()"></label>`).join('')}</div>` : '<p class="hint">开启并保存后，这里会显示可复制的订阅地址。</p>'}
+    <div class="row" style="margin:10px 0 0"><a class="button" href="/plugins/schedule/calendar.ics" download="schedule.ics">下载 .ics 文件</a><span class="hint" style="margin:0">下载不受订阅开关影响，可导入任意日历应用。</span></div>
+</section>
+
+<section class="card">
+  <h2>地区与迁移</h2>
+  <div class="grid">
+    <label>一周从哪天开始
+      <select name="weekStart">${[1,2,3,4,5,6,7].map((day) => `<option value="${day}"${cfg.region.weekStart === day ? ' selected' : ''}>周${WEEK[day - 1]}</option>`).join('')}</select>
+    </label>
+    <label>导出语言
+      <select name="language">
+        <option value="zh-CN"${cfg.region.language === 'zh-CN' ? ' selected' : ''}>中文</option>
+        <option value="en-US"${cfg.region.language === 'en-US' ? ' selected' : ''}>English</option>
+      </select>
+    </label>
+    <label>时区（可空，跟随系统）<input type="text" name="timezone" maxlength="40" value="${escapeHtml(cfg.region.timezone)}" placeholder="Asia/Shanghai"></label>
+  </div>
+  <p class="hint">周起始日同时影响日历页和复盘。时区只写入导出日历的 X-WR-TIMEZONE，日程仍按电脑本地时间执行；跨时区旅行时以设备时区为准。导出语言用于日历标题和事项类型。</p>
+  <div class="row" style="margin:10px 0 0">
+    <a class="button" href="/plugins/schedule/config/export" download="schedule-config.json">导出配置</a>
+    <label class="button" style="cursor:pointer">导入配置<input type="file" id="configFile" accept=".json,application/json" style="display:none"></label>
+    <span class="hint" style="margin:0">导入会整份替换作息、提醒、节假日、旅行和地区设置，待办池不受影响。</span>
+  </div>
 </section>
 
 <div class="row">
@@ -233,11 +282,14 @@ form.onsubmit=async(e)=>{
       reminder:{enabled:checked('reminderEnabled'),channel:val('reminderChannel'),account:val('reminderAccount'),peer:val('reminderPeer'),
         persona:val('reminderPersona'),
         leadMinutes:num('reminderLead'),maxPerDay:num('reminderMax'),quietStart:val('reminderQuietStart'),quietEnd:val('reminderQuietEnd'),
-        usePersona:checked('reminderUsePersona')},
+        usePersona:checked('reminderUsePersona'),leads:{work:num('reminderLeadWork'),fixed:num('reminderLeadFixed'),todo:num('reminderLeadTodo')},
+        restDaySilent:checked('reminderRestSilent'),snoozeMinutes:num('reminderSnooze')},
       holiday:{enabled:checked('holidayEnabled'),builtin:checked('holidayBuiltin'),student:checked('holidayStudent'),weekendDays:days('holidayWeekendDays')},
+      ics:{enabled:checked('icsEnabled'),port:num('icsPort')},
+      region:{weekStart:num('weekStart'),language:val('language'),timezone:val('timezone')},
       travel:{enabled:checked('travelEnabled'),weekend:checked('travelWeekend'),shortHoliday:checked('travelShort'),longHoliday:checked('travelLong'),
         weekendEvery:num('travelEvery'),aiChoose:checked('travelAi'),target:val('travelTarget'),targetFrom:val('travelTargetFrom'),targetTo:val('travelTargetTo'),
-        style:val('travelStyle')},
+        style:val('travelStyle'),budget:num('travelBudget'),currency:val('travelCurrency')},
       routine:{wake:val('wake'),sleep:val('sleep'),wakeMinutes:num('wakeMinutes'),breakfastMinutes:num('breakfastMinutes'),
         commuteMinutes:num('commuteMinutes'),windDownMinutes:num('windDownMinutes'),
         work:{enabled:checked('workEnabled'),title:val('workTitle'),days:days('workDays'),start:val('workStart'),end:val('workEnd'),place:val('workPlace'),repeat:val('workRepeat')},
@@ -253,8 +305,12 @@ form.onsubmit=async(e)=>{
 const aiEnabled=document.getElementById('aiEnabled'),aiModel=document.getElementById('aiModel');
 function syncAi(){aiModel.disabled=!aiEnabled.checked}
 aiEnabled.onchange=syncAi;syncAi();
+const presetSelect=document.getElementById('preset'),applyPreset=document.getElementById('applyPreset');
+function syncPreset(){applyPreset.disabled=!presetSelect.value}
+presetSelect.onchange=syncPreset;syncPreset();
 document.getElementById('applyPreset').onclick=async()=>{
   const preset=document.getElementById('preset').value;
+  if(!preset){setMsg('先从下拉框选择一个模板。',true);return}
   if(!confirm('套用模板会覆盖当前作息字段（起床、正事、三餐、运动、爱好、固定安排）。继续？'))return;
   setMsg('正在套用…');
   try{await post('config',{action:'preset',preset});location.reload()}
@@ -271,6 +327,30 @@ document.getElementById('testReminder').onclick=async()=>{
   try{const r=await post('reminder/test',{channel:val('reminderChannel'),account:val('reminderAccount'),peer:val('reminderPeer')});
     setMsg(r.ok?'测试提醒已发出（'+r.status+'）。':'发送状态：'+r.status, !r.ok)}
   catch(error){setMsg('没发出去：'+error.message,true)}
+};
+document.getElementById('holidayIcs').onchange=async(e)=>{
+  const file=e.target.files&&e.target.files[0];
+  if(!file)return;
+  setMsg('正在导入节假日…');
+  try{
+    const text=await file.text();
+    const r=await post('holiday/import',{text});
+    await post('config',{action:'read'});
+    setMsg('已导入 '+r.imported+' 个假期。'+(r.warnings&&r.warnings.length?' 提醒：'+r.warnings.join('；'):''));
+    setTimeout(()=>location.reload(),900);
+  }catch(error){setMsg('没导入成：'+error.message,true)}
+};
+document.getElementById('configFile').onchange=async(e)=>{
+  const file=e.target.files&&e.target.files[0];
+  if(!file)return;
+  if(!confirm('导入配置会覆盖当前作息、提醒、节假日、旅行和地区设置。继续？'))return;
+  setMsg('正在导入配置…');
+  try{
+    const bundle=JSON.parse(await file.text());
+    await post('config/import',{bundle});
+    setMsg('配置已导入，正在刷新…');
+    setTimeout(()=>location.reload(),800);
+  }catch(error){setMsg('没导入成：'+error.message,true)}
 };
 </script></body></html>`;
 }

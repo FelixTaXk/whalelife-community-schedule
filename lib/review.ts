@@ -52,9 +52,11 @@ export type WeeklyReview = {
   doneDelta: number;
 };
 
-/** 周一为一周开始。 */
-export function weekStartOf(date: string): string {
-  return addDays(date, -(isoWeekday(parseDateKey(date)) - 1));
+/** 默认周一为一周开始；地区设置可改为周日或其他星期。 */
+export function weekStartOf(date: string, weekStart = 1): string {
+  const weekday = isoWeekday(parseDateKey(date));
+  const start = ((weekStart - 1) % 7 + 7) % 7 + 1;
+  return addDays(date, -((weekday - start + 7) % 7));
 }
 
 function countable(item: PlanItem): boolean {
@@ -199,8 +201,8 @@ function statWeek(start: string, plans: Plan[], exceptions: ExceptionDay[]): Wee
  * @param exceptions 同期异常日
  * @param date 用来定位本周的任意一天，默认今天由调用方传
  */
-export function weeklyReview(plans: Plan[], exceptions: ExceptionDay[], date: string): WeeklyReview {
-  const start = weekStartOf(date);
+export function weeklyReview(plans: Plan[], exceptions: ExceptionDay[], date: string, weekStart = 1): WeeklyReview {
+  const start = weekStartOf(date, weekStart);
   const previousStart = addDays(start, -7);
   const current = statWeek(start, plans, exceptions.filter((entry) => entry.date >= start && entry.date <= addDays(start, 6)));
   const previous = statWeek(previousStart, plans, exceptions.filter((entry) => entry.date >= previousStart && entry.date <= addDays(previousStart, 6)));

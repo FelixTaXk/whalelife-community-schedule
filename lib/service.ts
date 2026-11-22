@@ -1,18 +1,19 @@
 /*! 日程 plugin · 运行时服务：配置、补生成、编辑、清理。 */
 
+import { randomUUID } from 'node:crypto';
 import type { Context } from '../../../core/context.ts';
 import { augmentWithModel } from './ai.ts';
 import { applyException, exceptionKey, isExceptionKind, makeException, type ExceptionDay, type ExceptionKind } from './exceptions.ts';
 import { resolveDayInfo } from './holidays.ts';
 import { generatePlan, isStale } from './plan.ts';
 import { weeklyReview, weekStartOf, type WeeklyReview } from './review.ts';
-import type { BlockKind, Config, ItemStatus, Plan, PlanItem } from './types.ts';
+import type { BlockKind, Config, ItemStatus, Plan, PlanItem, TodoBlock, TodoItem } from './types.ts';
 import { BLOCK_KINDS, normalizeConfig } from './types.ts';
-import { resolveTravel, travelCandidates, travelKey, type TravelOverride } from './travel.ts';
+import { resolveTravel, travelCandidates, travelKey, attachItinerary, type TravelOverride } from './travel.ts';
 import { chooseTravelWithModel } from './travel-ai.ts';
 import type { WeatherBridge } from './weather-bridge.ts';
 import type { WeatherDay } from './weather-types.ts';
-import { applyWeatherRules, weatherKey } from './weather-rules.ts';
+import { applyWeatherRules, applyHourlyRules, weatherKey } from './weather-rules.ts';
 import { Store } from './store.ts';
 import { addDays, dateKey, formatHHMM, isValidDateKey, isoWeekday, minuteOfDay, parseDateKey, parseHHMM } from './time.ts';
 
@@ -128,6 +129,44 @@ export class ScheduleService {
     return out;
   }
 
+  /** 今天优先放「今天必须做」和池里的待办；未来日期只放已经钉到那天或已排期的。 */
+  private async todoBlocksFor(date: string): Promise<TodoBlock[]> {
+    const today = dateKey(new Date());
+    const items = await this.store.readTodos();
+    const candidates = items
+      .filter((item) => item.status !== 'done')
+      .filter((item) => (item.status === 'scheduled' ? item.scheduledDate === date : date === today))
+      .sort((left, right) => {
+        if (left.priority !== right.priority) return left.priority === 'must' ? -1 : 1;
+        return left.createdAt.localeCompare(right.createdAt);
+      });
+    const blocks: TodoBlock[] = [];
+    let normal = 0;
+    for (const item of candidates) {
+      if (item.priority === 'normal' && normal >= 2) continue;
+      blocks.push({ id: item.id, title: item.title, minutes: item.minutes });
+      if (item.priority === 'normal') normal += 1;
+      if (blocks.length >= 6) break;
+    }
+    return blocks;
+  }
+
+  /** 计划落盘后同步待办状态：排进计划的变 scheduled，完成的保持 done。 */
+  private async syncTodos(plan: Plan): Promise<void> {
+    const assigned = new Set(plan.items.map((item) => item.todoId).filter((id): id is string => Boolean(id)));
+    const items = await this.store.readTodos();
+    let changed = false;
+    for (const item of items) {
+      if (!assigned.has(item.id) || item.status === 'done') continue;
+      if (item.status !== 'scheduled' || item.scheduledDate !== plan.date) {
+        item.status = 'scheduled';
+        item.scheduledDate = plan.date;
+        changed = true;
+      }
+    }
+    if (changed) await this.store.writeTodos(items);
+  }
+
   /** 读不到就生成；已手动改过且未 force 的计划原样保留。 */
   async ensure(date: string, options: EnsureOptions = {}): Promise<Plan> {
     if (!isValidDateKey(date)) throw Error('日期格式应为 YYYY-MM-DD');
@@ -148,7 +187,8 @@ export class ScheduleService {
       }
       const day = live ?? await this.fetchDay(date);
       const override = options.allowAi === false ? null : await this.travelOverride(effective, date);
-      let plan = generatePlan(effective, date, override, exception);
+      const todoBlocks = await this.todoBlocksFor(date);
+      let plan = generatePlan(effective, date, override, exception, todoBlocks);
       plan = applyWeatherRules(plan, day, effective.routine);
       if (options.allowAi !== false && effective.ai.enabled && effective.ai.model) {
         try {
@@ -160,9 +200,12 @@ export class ScheduleService {
       }
       // 模型可能忽略天气提示，最后再兜一次；这段是幂等的。
       plan = applyWeatherRules(plan, day, effective.routine);
+      plan = attachItinerary(plan, effective.travel, day);
+      plan = applyHourlyRules(plan, day ? this.weather?.peek()?.hours : undefined, day);
       const current = await this.store.read(date);
       if (current?.edited && !options.force) return current;
       await this.store.write(plan);
+      await this.syncTodos(plan);
       this.ctx.emit('plugin:schedule:generated', { date, source: plan.source, weather: day?.text ?? '' });
       return plan;
     })().finally(() => this.inFlight.delete(date));
@@ -283,6 +326,7 @@ export class ScheduleService {
     const items = plan.items.map((item) => ({ ...item }));
     const action = String(input.action ?? '');
     const index = input.id ? items.findIndex((item) => item.id === input.id) : -1;
+    const before = index >= 0 ? { ...items[index] } : null;
 
     if (action === 'add') {
       const start = parseHHMM(input.start);
@@ -342,8 +386,120 @@ export class ScheduleService {
       items: renumber(items),
     };
     await this.store.write(next);
+    if (action === 'remove' && before?.todoId) {
+      await this.releaseTodo(before.todoId);
+    } else if (action === 'status' && before?.todoId) {
+      await this.setTodoDone(before.todoId, input.status === 'done');
+    }
     this.ctx.emit('plugin:schedule:edited', { date });
     return next;
+  }
+
+  async todos(): Promise<TodoItem[]> {
+    const items = await this.store.readTodos();
+    return items.sort((left, right) => {
+      if (left.status !== right.status) {
+        const order = { pool: 0, scheduled: 1, done: 2 } as const;
+        return order[left.status] - order[right.status];
+      }
+      return left.createdAt.localeCompare(right.createdAt);
+    });
+  }
+
+  async addTodo(input: { title?: unknown; minutes?: unknown; priority?: unknown; note?: unknown }): Promise<TodoItem> {
+    const title = cleanText(input.title, 60);
+    if (!title) throw Error('待办要有个标题');
+    const minutes = Math.min(480, Math.max(10, Math.round(Number(input.minutes) || 30)));
+    const item: TodoItem = {
+      id: `t${randomUUID().slice(0, 8)}`,
+      title,
+      minutes,
+      priority: input.priority === 'must' ? 'must' : 'normal',
+      status: 'pool',
+      createdAt: new Date().toISOString(),
+      ...(cleanText(input.note, 120) ? { note: cleanText(input.note, 120) } : {}),
+    };
+    const items = await this.store.readTodos();
+    if (items.filter((entry) => entry.status !== 'done').length >= 100) throw Error('待办最多保留 100 条，先清理一些');
+    items.push(item);
+    await this.store.writeTodos(items);
+    this.ctx.emit('plugin:schedule:todos', { action: 'add', id: item.id });
+    return item;
+  }
+
+  async removeTodo(id: string): Promise<void> {
+    const items = await this.store.readTodos();
+    const next = items.filter((item) => item.id !== id);
+    if (next.length === items.length) throw Error('没有找到这条待办');
+    await this.store.writeTodos(next);
+    this.ctx.emit('plugin:schedule:todos', { action: 'remove', id });
+  }
+
+  async completeTodo(id: string, done: boolean): Promise<TodoItem> {
+    await this.setTodoDone(id, done);
+    const item = (await this.store.readTodos()).find((entry) => entry.id === id);
+    if (!item) throw Error('没有找到这条待办');
+    return item;
+  }
+
+  /** 把待办钉到某天：当天有现成计划就找空档插入，没有就重新生成。 */
+  async scheduleTodo(date: string, id: string): Promise<Plan> {
+    if (!isValidDateKey(date)) throw Error('日期格式应为 YYYY-MM-DD');
+    return this.serial(date, async () => {
+      const items = await this.store.readTodos();
+      const todo = items.find((item) => item.id === id);
+      if (!todo) throw Error('没有找到这条待办');
+      if (todo.status === 'done') throw Error('这条待办已经完成');
+      const plan = await this.ensure(date);
+      const gap = findGap(plan, todo.minutes);
+      if (!gap) throw Error(`这天没有 ${todo.minutes} 分钟的空档，先挪开别的安排`);
+      const next: Plan = {
+        ...plan,
+        edited: true,
+        items: renumber([...plan.items, {
+          id: '',
+          start: formatHHMM(gap.start),
+          end: formatHHMM(gap.end),
+          title: todo.title,
+          kind: 'todo',
+          status: 'pending',
+          todoId: todo.id,
+        }]),
+      };
+      await this.store.write(next);
+      todo.status = 'scheduled';
+      todo.scheduledDate = date;
+      await this.store.writeTodos(items);
+      this.ctx.emit('plugin:schedule:edited', { date, todo: id });
+      return next;
+    });
+  }
+
+  /** 放回池子并清掉计划里的引用；计划条目保留成普通待办块。 */
+  async unscheduleTodo(id: string): Promise<void> {
+    const items = await this.store.readTodos();
+    const todo = items.find((item) => item.id === id);
+    if (!todo) throw Error('没有找到这条待办');
+    todo.status = 'pool';
+    delete todo.scheduledDate;
+    await this.store.writeTodos(items);
+  }
+
+  private async setTodoDone(id: string, done: boolean): Promise<void> {
+    const items = await this.store.readTodos();
+    const todo = items.find((item) => item.id === id);
+    if (!todo) return;
+    todo.status = done ? 'done' : 'scheduled';
+    await this.store.writeTodos(items);
+  }
+
+  private async releaseTodo(id: string): Promise<void> {
+    const items = await this.store.readTodos();
+    const todo = items.find((item) => item.id === id);
+    if (!todo || todo.status === 'done') return;
+    todo.status = 'pool';
+    delete todo.scheduledDate;
+    await this.store.writeTodos(items);
   }
 
   async readException(date: string): Promise<ExceptionDay | null> {
@@ -381,11 +537,11 @@ export class ScheduleService {
   /** 周复盘：本周 + 上周对比，只看已落盘的计划。 */
   async review(date: string): Promise<WeeklyReview> {
     const anchor = isValidDateKey(date) ? date : dateKey(new Date());
-    const start = weekStartOf(anchor);
+    const start = weekStartOf(anchor, this.current.region.weekStart);
     const from = addDays(start, -7);
     const plans = (await this.list(from, 14)).map((entry) => entry.plan).filter((plan): plan is Plan => Boolean(plan));
     const exceptions = await this.store.exceptions(from, addDays(start, 6));
-    return weeklyReview(plans, exceptions, anchor);
+    return weeklyReview(plans, exceptions, anchor, this.current.region.weekStart);
   }
 
   status(): { lastError: string; lastTickAt: string; ticking: boolean } {
@@ -404,6 +560,20 @@ function assertFree(items: PlanItem[], start: number, end: number, ignoreIndex: 
       throw Error(`和 ${item.start}-${item.end}「${item.title}」重叠了`);
     }
   }
+}
+
+function findGap(plan: Plan, minutes: number): { start: number; end: number } | null {
+  const occupied = plan.items
+    .map((item) => ({ start: parseHHMM(item.start), end: parseHHMM(item.end) }))
+    .filter((item): item is { start: number; end: number } => item.start !== null && item.end !== null)
+    .sort((left, right) => left.start - right.start);
+  let cursor = occupied.length ? occupied[0].start : 0;
+  for (const block of occupied) {
+    if (block.start - cursor >= minutes) return { start: cursor, end: cursor + minutes };
+    cursor = Math.max(cursor, block.end);
+  }
+  if (24 * 60 - cursor >= minutes) return { start: cursor, end: cursor + minutes };
+  return null;
 }
 
 function renumber(items: PlanItem[]): PlanItem[] {

@@ -2,10 +2,11 @@
 
 import { BASE_CSS, escapeHtml } from './theme.ts';
 
-export type CalendarData = { today: string; version: string };
+export type CalendarData = { today: string; version: string; weekStart?: number };
 
 export function calendarPage(data: CalendarData): string {
-  const initialWeek = mondayOf(data.today);
+  const startDay = data.weekStart && data.weekStart >= 1 && data.weekStart <= 7 ? data.weekStart : 1;
+  const initialWeek = weekStartOf(data.today, startDay);
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>日程</title><style>${BASE_CSS}
 .tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
@@ -34,6 +35,10 @@ export function calendarPage(data: CalendarData): string {
 .wxbar b{font-weight:600}
 .wxbar .tip{color:var(--warn);font-size:12px}
 .wxnote{font-size:12px;color:var(--warn);background:rgba(162,106,31,.08);border-radius:8px;padding:6px 12px;margin:8px 0 0}
+.hourly{display:flex;gap:3px;overflow-x:auto;margin-top:8px;padding-bottom:2px}
+.hourly div{flex:0 0 34px;text-align:center;font-size:10px;color:var(--muted);border-radius:6px;background:var(--soft);padding:3px 0}
+.hourly div.wet{background:rgba(91,139,184,.18);color:#3d6b96}
+.hourly em{display:block;font-style:normal;font-size:12px;color:var(--text)}
 .tab .wx{display:block;font-size:13px;line-height:1.2;margin-top:2px}
 .editor{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;width:100%}
 .editor input{width:auto;flex:1 1 120px}
@@ -60,6 +65,26 @@ export function calendarPage(data: CalendarData): string {
 .rvcol p{margin:2px 0}
 .exbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
 .exbar span{font-size:12px;color:var(--muted)}
+.todohead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.todohead h2{margin:0}
+.todohead span{font-size:12px;color:var(--muted)}
+.todolist{list-style:none;margin:10px 0 0;padding:0}
+.todolist li{display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
+.todolist li:last-child{border-bottom:0}
+.todolist li b{font-weight:600}
+.todolist li .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.todolist li .must{color:var(--warn);font-size:11px;border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.todolist li.done b{color:var(--muted);text-decoration:line-through}
+.todoadd{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
+.todoadd input{width:auto;flex:1 1 120px}
+.todoadd .small{flex:0 0 88px}
+.itin{margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--soft);font-size:13px}
+.itin h3{margin:0 0 6px;font-size:14px}
+.itin p{margin:4px 0;line-height:1.5}
+.itin ul{margin:4px 0 0;padding-left:18px}
+.itin li{margin:2px 0}
+.itin .budget{color:var(--accent)}
+.itin .backup{color:var(--warn)}
 @media(max-width:560px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.rvcols{grid-template-columns:1fr}}
 </style></head><body><main>
 <header>
@@ -74,18 +99,18 @@ export function calendarPage(data: CalendarData): string {
 <div id="banner"></div>
 <div class="tabs" id="tabs"></div>
 <section class="card review" id="review"></section>
-<section class="card" id="day"></section>
-</main>
+<section class="card" id="todos"></section>
+<section class="card" id="day"></section></main>
 <script>
 var API='/plugins/schedule/';
-var state={today:${JSON.stringify(data.today)},weekStart:${JSON.stringify(initialWeek)},selected:${JSON.stringify(data.today)},plans:{},exceptions:{},review:null,editing:null,config:null,status:null,weather:null,busy:false};
-var COLORS={routine:'#8fa5a3',meal:'#d78b4a',commute:'#5b8bb8',work:'#17906f',study:'#2f8f8f',exercise:'#c25b5b',free:'#7a6fbf',chore:'#9a7d55',rest:'#6f8f9a',social:'#b0709a',fixed:'#b39431',travel:'#c07a3e',sleep:'#3f4f55'};
-var KIND={routine:'日常',meal:'用餐',commute:'路上',work:'正事',study:'学习',exercise:'运动',free:'自由',chore:'家务',rest:'休息',social:'社交',fixed:'固定',travel:'旅行',sleep:'睡觉'};
+var state={today:${JSON.stringify(data.today)},weekStart:${JSON.stringify(initialWeek)},regionWeek:${JSON.stringify(startDay)},selected:${JSON.stringify(data.today)},plans:{},exceptions:{},review:null,todos:[],editing:null,config:null,status:null,weather:null,busy:false};
+var COLORS={routine:'#8fa5a3',meal:'#d78b4a',commute:'#5b8bb8',work:'#17906f',study:'#2f8f8f',exercise:'#c25b5b',free:'#7a6fbf',chore:'#9a7d55',rest:'#6f8f9a',social:'#b0709a',fixed:'#b39431',travel:'#c07a3e',sleep:'#3f4f55',todo:'#a8682a'};
+var KIND={routine:'日常',meal:'用餐',commute:'路上',work:'正事',study:'学习',exercise:'运动',free:'自由',chore:'家务',rest:'休息',social:'社交',fixed:'固定',travel:'旅行',sleep:'睡觉',todo:'待办'};
 var WEEK=['一','二','三','四','五','六','日'];
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function pad(n){return String(n).padStart(2,'0')}
 function addDays(key,n){var p=key.split('-').map(Number);var d=new Date(p[0],p[1]-1,p[2]+n);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
-function mondayOf(key){var p=key.split('-').map(Number);var d=new Date(p[0],p[1]-1,p[2]);var w=d.getDay()||7;return addDays(key,1-w)}
+function weekStartOf(key,startDay){var p=key.split('-').map(Number);var d=new Date(p[0],p[1]-1,p[2]);var w=d.getDay()||7;var s=((Number(startDay||1)-1+7)%7)+1;return addDays(key,-((w-s+7)%7))}
 function toMin(v){var p=String(v).split(':');return Number(p[0])*60+Number(p[1])}
 function weekdayOf(key){var p=key.split('-').map(Number);var d=new Date(p[0],p[1]-1,p[2]);return d.getDay()||7}
 function dayTitle(key){var p=key.split('-').map(Number);return (p[1])+'月'+p[2]+'日 周'+WEEK[weekdayOf(key)-1]}
@@ -101,6 +126,7 @@ async function load(){
     var r=await post('data',{from:state.weekStart,days:7});
     state.plans={};r.plans.forEach(function(entry){if(entry.plan)state.plans[entry.date]=entry.plan});
     state.exceptions={};(r.exceptions||[]).forEach(function(ex){state.exceptions[ex.date]=ex});
+    state.todos=r.todos||[];
     state.config=r.config;state.status=r.status;state.today=r.today||state.today;state.weather=r.weather||null;
     try{state.review=await post('review',{date:state.selected})}catch(e){state.review=null}
     render();
@@ -109,7 +135,7 @@ async function load(){
 }
 function render(){
   document.getElementById('sub').textContent='v'+${JSON.stringify(data.version)}+' · '+dayTitle(state.today)+' · 按作息自动排';
-  renderBanner();renderTabs();renderReview();renderDay();
+  renderBanner();renderTabs();renderReview();renderTodos();renderDay();
 }
 function hours(minutes){return (Math.round(minutes/6)/10).toFixed(1)}
 function delta(v,unit){var n=Number(v)||0;return (n>0?'+':'')+n+(unit||'')}
@@ -142,6 +168,46 @@ function renderReview(){
     +'<div class="rvcol"><b>旅行与运动</b>'+out+'</div></div>';
   el.innerHTML=html;
 }
+function renderTodos(){
+  var el=document.getElementById('todos'),list=state.todos||[];
+  var open=list.filter(function(t){return t.status!=='done'}),pool=open.filter(function(t){return t.status==='pool'});
+  var rows=list.slice(0,12).map(function(t){
+    var label=t.status==='done'?'已完成':(t.status==='scheduled'?('已排 '+(t.scheduledDate||'').slice(5)):'池中');
+    var ops=t.status==='done'
+      ? '<button type="button" class="small" data-todo="unschedule" data-id="'+esc(t.id)+'">恢复</button>'
+      : (t.status==='scheduled'
+        ? '<button type="button" class="small" data-todo="unschedule" data-id="'+esc(t.id)+'">放回池</button>'
+        : '<button type="button" class="small" data-todo="schedule" data-id="'+esc(t.id)+'">排到这天</button>');
+    return '<li class="'+(t.status==='done'?'done':'')+'"><b class="grow">'+esc(t.title)+'</b>'
+      +(t.priority==='must'?'<span class="must">必须</span>':'')
+      +'<span class="meta">'+t.minutes+' 分钟 · '+label+'</span>'+ops
+      +'<button type="button" class="small" data-todo="remove" data-id="'+esc(t.id)+'">删</button></li>';
+  }).join('');
+  el.innerHTML='<div class="todohead"><h2>待办池</h2><span>池中 '+pool.length+' 条 · 未完成 '+open.length+' 条 · 生成日程时会先填今天的空档（普通待办最多 2 条，「必须」优先）</span></div>'
+    +(rows?'<ul class="todolist">'+rows+'</ul>':'<div class="empty">还没有待办。加一条，今天的空档就会自动排进去。</div>')
+    +'<div class="todoadd"><input id="todoTitle" placeholder="要做什么，例如：整理报销单"><input id="todoMinutes" class="small" type="number" min="10" max="480" value="30"><select id="todoPriority"><option value="normal">普通</option><option value="must">今天必须做</option></select><button type="button" id="todoAdd">加进池子</button></div>';
+  document.getElementById('todoAdd').onclick=async function(){
+    var title=document.getElementById('todoTitle').value.trim();
+    if(!title){alert('先写个标题');return}
+    await todoPost('add',{title:title,minutes:Number(document.getElementById('todoMinutes').value),priority:document.getElementById('todoPriority').value});
+  };
+  [].forEach.call(el.querySelectorAll('[data-todo]'),function(btn){
+    btn.onclick=function(){
+      var action=btn.getAttribute('data-todo'),id=btn.getAttribute('data-id');
+      if(action==='remove'&&!confirm('删掉这条待办？'))return;
+      if(action==='schedule')todoPost('schedule',{id:id,date:state.selected});
+      else todoPost(action,{id:id});
+    };
+  });
+}
+async function todoPost(action,body){
+  try{
+    var r=await post('todos',Object.assign({action:action},body));
+    state.todos=r.todos||state.todos;
+    if(r.plan)state.plans[r.plan.date]=r.plan;
+    renderTodos();renderDay();
+  }catch(e){alert('没成功：'+e.message)}
+}
 function renderBanner(){
   var html='';
   if(state.config&&!state.config.enabled)html+='<div class="alert">自动生成已关闭：只能手动点「重排这天」或「生成这天」。</div>';
@@ -155,12 +221,22 @@ function wxDay(key){
   return null;
 }
 function weatherBar(key,plan){
-  var wd=wxDay(key)||(plan&&plan.weather&&plan.weather.date===key?plan.weather:null);if(!wd)return '';
-  var html='<div class="wxbar"><span class="wxicon">'+esc(wd.icon)+'</span><b>'+esc(wd.text)+' '+wd.min+'° / '+wd.max+'°</b>';
-  if(key===state.today&&state.weather&&state.weather.now)html+='<span class="muted">现在 '+state.weather.now.temperature+'°</span>';
-  if(wd.precipitationProbability>0)html+='<span class="muted">降水 '+wd.precipitationProbability+'%</span>';
-  if(wd.tip)html+='<span class="tip">'+esc(wd.tip)+'</span>';
-  return html+'</div>';
+  var wd=wxDay(key)||(plan&&plan.weather&&plan.weather.date===key?plan.weather:null);
+  var html='';
+  if(wd){
+    html+='<div class="wxbar"><span class="wxicon">'+esc(wd.icon)+'</span><b>'+esc(wd.text)+' '+wd.min+'° / '+wd.max+'°</b>';
+    if(key===state.today&&state.weather&&state.weather.now)html+='<span class="muted">现在 '+state.weather.now.temperature+'°</span>';
+    if(wd.precipitationProbability>0)html+='<span class="muted">降水 '+wd.precipitationProbability+'%</span>';
+    if(wd.tip)html+='<span class="tip">'+esc(wd.tip)+'</span>';
+    html+='</div>';
+  }
+  if(plan&&plan.hourly&&plan.hourly.length){
+    html+='<div class="hourly">'+plan.hourly.filter(function(h){return h.hour>=6&&h.hour<=23}).map(function(h){
+      var wet=h.precipitationProbability>=30;
+      return '<div'+(wet?' class="wet"':'')+' title="降水 '+h.precipitationProbability+'% · '+esc(h.text)+'"><em>'+h.temperature+'°</em>'+pad(h.hour)+':00<br>'+(wet?h.precipitationProbability+'%':'')+'</div>';
+    }).join('')+'</div>';
+  }
+  return html;
 }
 function renderTabs(){
   var tabs=[],i,key;
@@ -170,7 +246,7 @@ function renderTabs(){
     var active=key===state.selected?' active':'';
     var today=key===state.today?' today':'';
     var wd=wxDay(key);
-    tabs.push('<div class="tab'+has+active+today+'" data-date="'+key+'"><b>周'+WEEK[i]+'</b><span>'+dayTitle(key).replace(' 周'+WEEK[i],'')+'</span>'+(wd?'<span class="wx">'+esc(wd.icon)+'</span>':'<span class="wx"> </span>')+'<span class="dot"></span></div>');
+    tabs.push('<div class="tab'+has+active+today+'" data-date="'+key+'"><b>周'+WEEK[weekdayOf(key)-1]+'</b><span>'+dayTitle(key).replace(' 周'+WEEK[weekdayOf(key)-1],'')+'</span>'+(wd?'<span class="wx">'+esc(wd.icon)+'</span>':'<span class="wx"> </span>')+'<span class="dot"></span></div>');
   }
   var el=document.getElementById('tabs');el.innerHTML=tabs.join('');
   [].forEach.call(el.querySelectorAll('.tab'),function(tab){tab.onclick=function(){state.selected=tab.getAttribute('data-date');state.editing=null;renderTabs();renderDay()}});
@@ -188,6 +264,16 @@ function nowLine(plan){
   return '现在 '+pad(d.getHours())+':'+pad(d.getMinutes())+' · 今天的安排都结束了';
 }
 function exLabel(kind){return {sick:'生病',leave:'请假',overtime:'加班',half:'休息半天',rest:'休息'}[kind]||kind}
+function itineraryBlock(plan){
+  var t=plan.travel;if(!t||!t.itinerary)return '';
+  var it=t.itinerary;
+  return '<div class="itin"><h3>旅行行程单 · '+esc(t.destination)+' 第 '+(t.dayIndex+1)+'/'+t.days+' 天</h3>'
+    +'<p>🚆 '+esc(it.transport)+'</p>'
+    +'<p>🛏 '+esc(it.lodging)+'</p>'
+    +'<p class="budget">💰 '+esc(it.budget)+'</p>'
+    +'<p>🧳 行前清单</p><ul>'+it.checklist.map(function(item){return '<li>'+esc(item)+'</li>'}).join('')+'</ul>'
+    +'<p class="backup">☔ '+esc(it.backup)+'</p></div>';
+}
 function exBar(key,exception){
   var html='<div class="exbar"><span>异常日模式</span>';
   if(exception)html+='<span class="pill warn">'+esc(exLabel(exception.kind))+'</span><span>'+esc(exception.note||'')+'</span><button type="button" class="small" data-act="exClear">取消异常日</button>';
@@ -209,6 +295,7 @@ function renderDay(){
   if(exception)head+='<p class="muted" style="margin:-6px 0 0">异常日：'+esc(exception.note||exLabel(exception.kind))+'。恢复常规排程点下面的「取消异常日」。</p>';
   else if(plan.exception)head+='<p class="muted" style="margin:-6px 0 0">异常日：'+esc(plan.exception.note)+'。</p>';
   head+=weatherBar(key,plan);
+  head+=itineraryBlock(plan);
   if(plan.weatherAdjusted&&plan.weatherAdjusted.length)head+='<div class="wxnote">按天气调整：'+esc(plan.weatherAdjusted.join('；'))+'</div>';
   var now=nowLine(plan);
   if(now)head+='<div class="nowbar">'+esc(now)+'</div>';
@@ -222,7 +309,7 @@ function renderDay(){
     if(!editing){
       if(item.status==='done')ops+='<button type="button" class="small" data-act="status" data-id="'+item.id+'" data-status="pending">撤销</button>';
       else if(item.status==='skipped')ops+='<button type="button" class="small" data-act="status" data-id="'+item.id+'" data-status="pending">恢复</button>';
-      else ops+='<button type="button" class="small" data-act="status" data-id="'+item.id+'" data-status="done">完成</button><button type="button" class="small" data-act="status" data-id="'+item.id+'" data-status="skipped">跳过</button>';
+      else ops+='<button type="button" class="small" data-act="status" data-id="'+item.id+'" data-status="done">完成</button><button type="button" class="small" data-act="status" data-id="'+item.id+'" data-status="skipped">跳过</button><button type="button" class="small" data-act="snooze" data-id="'+item.id+'">稍后</button>';
       ops+='<button type="button" class="small" data-act="edit" data-id="'+item.id+'">改</button><button type="button" class="small" data-act="remove" data-id="'+item.id+'">删除</button>';
     }
     var editor='';
@@ -257,6 +344,10 @@ async function act(name,id,status,kind){
       await post('generate',{date:key,force:false});
     }else if(name==='status'){
       await post('item',{date:key,action:'status',id:id,status:status});
+    }else if(name==='snooze'){
+      var r=await post('reminder/snooze',{date:key,id:id});
+      var due=new Date(r.dueAt),hh=pad(due.getHours())+':'+pad(due.getMinutes());
+      alert('已安排 '+hh+' 再提醒一次。完成后会自动取消。');
     }else if(name==='edit'){
       state.editing=id;renderDay();return;
     }else if(name==='cancelEdit'){
@@ -287,7 +378,7 @@ async function act(name,id,status,kind){
 }
 document.getElementById('prev').onclick=function(){state.weekStart=addDays(state.weekStart,-7);state.selected=addDays(state.selected,-7);state.editing=null;load()};
 document.getElementById('next').onclick=function(){state.weekStart=addDays(state.weekStart,7);state.selected=addDays(state.selected,7);state.editing=null;load()};
-document.getElementById('home').onclick=function(){state.weekStart=mondayOf(state.today);state.selected=state.today;state.editing=null;load()};
+document.getElementById('home').onclick=function(){state.weekStart=weekStartOf(state.today,state.regionWeek);state.selected=state.today;state.editing=null;load()};
 document.getElementById('regen').onclick=async function(){
   var plan=state.plans[state.selected];
   var warn=plan&&plan.edited?'这天有手动改过的地方，重排会覆盖。继续？':'按当前作息重排这天？';
@@ -298,10 +389,12 @@ load();
 </script></body></html>`;
 }
 
-function mondayOf(key: string): string {
+function weekStartOf(key: string, startDay = 1): string {
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);
   const weekday = date.getDay() || 7;
-  date.setDate(date.getDate() + 1 - weekday);
+  const start = ((startDay - 1) % 7 + 7) % 7 + 1;
+  const offset = (weekday - start + 7) % 7;
+  date.setDate(date.getDate() - offset);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
