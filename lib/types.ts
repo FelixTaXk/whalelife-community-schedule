@@ -6,11 +6,11 @@ import { clamp, formatHHMM, isTime, isValidDateKey, parseHHMM } from './time.ts'
 
 export type BlockKind =
   | 'routine' | 'meal' | 'commute' | 'work' | 'study'
-  | 'exercise' | 'free' | 'chore' | 'rest' | 'social' | 'fixed' | 'travel' | 'sleep' | 'todo';
+  | 'exercise' | 'free' | 'chore' | 'rest' | 'social' | 'fixed' | 'travel' | 'sleep' | 'todo' | 'surf';
 
 export const BLOCK_KINDS: readonly BlockKind[] = [
   'routine', 'meal', 'commute', 'work', 'study',
-  'exercise', 'free', 'chore', 'rest', 'social', 'fixed', 'travel', 'sleep', 'todo',
+  'exercise', 'free', 'chore', 'rest', 'social', 'fixed', 'travel', 'sleep', 'todo', 'surf',
 ];
 
 export const KIND_LABEL: Record<BlockKind, string> = {
@@ -28,6 +28,7 @@ export const KIND_LABEL: Record<BlockKind, string> = {
   travel: '旅行',
   sleep: '睡觉',
   todo: '待办',
+  surf: '冲浪',
 };
 
 export type WorkRoutine = {
@@ -168,6 +169,15 @@ export type JournalEntry = {
   };
 };
 
+/** 网上冲浪排期：只在检测到对应子插件时把刷视频放进自由时间，不自动播放。 */
+export type SurfConfig = {
+  enabled: boolean;
+  /** 空 = 所有当前可用的平台；填平台 ID 只排这些。 */
+  platforms: string[];
+  minutes: number;
+  perDay: number;
+};
+
 /** 只读 ICS 订阅：关闭时只能手动下载，开启时在本机起一个带随机令牌的 HTTP 出口。 */
 export type IcsConfig = { enabled: boolean; port: number };
 
@@ -270,6 +280,7 @@ export type Config = {
   ics: IcsConfig;
   region: RegionConfig;
   routine: Routine;
+  surf: SurfConfig;
 };
 
 export type ItemStatus = 'pending' | 'done' | 'skipped';
@@ -521,6 +532,7 @@ export function defaultConfig(): Config {
     },
     ics: { enabled: false, port: 38765 },
     region: { weekStart: 1, language: 'zh-CN', timezone: '' },
+    surf: { enabled: false, platforms: [], minutes: 30, perDay: 1 },
     routine: cloneRoutine(OFFICE_ROUTINE),
   };
 }
@@ -764,6 +776,19 @@ function normalizeJournalConfig(value: unknown, fallback: JournalConfig): Journa
   };
 }
 
+function normalizeSurfConfig(value: unknown, fallback: SurfConfig): SurfConfig {
+  const raw = value && typeof value === 'object' ? (value as Record<string, any>) : {};
+  const platforms = Array.isArray(raw.platforms)
+    ? [...new Set(raw.platforms.map((id: unknown) => text(id, 40)).filter(Boolean))].slice(0, 8)
+    : [...fallback.platforms];
+  return {
+    enabled: bool(raw.enabled, fallback.enabled),
+    platforms,
+    minutes: integer(raw.minutes, fallback.minutes, 10, 180),
+    perDay: integer(raw.perDay, fallback.perDay, 1, 3),
+  };
+}
+
 export function normalizeConfig(value: unknown, fallback: Config = defaultConfig()): Config {
   const raw = value && typeof value === 'object' ? (value as Record<string, any>) : {};
   const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
@@ -806,6 +831,7 @@ export function normalizeConfig(value: unknown, fallback: Config = defaultConfig
       language: raw.region?.language === 'en-US' ? 'en-US' : 'zh-CN',
       timezone: text(raw.region?.timezone, 40),
     },
+    surf: normalizeSurfConfig(raw.surf, fallback.surf),
     routine: raw.routine === undefined ? cloneRoutine(fallback.routine) : normalizeRoutine(raw.routine),
   };
 }

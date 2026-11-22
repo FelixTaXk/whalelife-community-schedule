@@ -8,6 +8,7 @@ import type { ExceptionDay } from './exceptions.ts';
 import { exceptionKey, exceptionLabel } from './exceptions.ts';
 import { occursOn } from './recurrence.ts';
 import { resolveTravel, type TravelOverride } from './travel.ts';
+import { chooseSurfTargets, type SurfTarget } from './surf.ts';
 import {
   MINUTES_PER_DAY, formatHHMM, hashSeed, isoWeekday, parseDateKey, parseHHMM, pick, weekdayLabel,
 } from './time.ts';
@@ -36,18 +37,20 @@ export function routineHash(routine: Routine): string {
   return createHash('sha256').update(JSON.stringify(routine)).digest('hex').slice(0, 12);
 }
 
-/** 作息之外的节假日/旅行设置也参与“过期”判断；只改这些不会留下旧计划。 */
-export function configHash(config: Config): string {
+/** 作息之外的节假日/旅行/冲浪设置也参与“过期”判断；只改这些不会留下旧计划。 */
+export function configHash(config: Config, surfTargets: SurfTarget[] = []): string {
   return createHash('sha256').update(JSON.stringify({
     routine: config.routine,
     holiday: config.holiday,
     travel: config.travel,
+    surf: config.surf,
+    surfTargets: surfTargets.map((target) => target.id),
   })).digest('hex').slice(0, 12);
 }
 
-export function isStale(plan: Plan | null, config: Config): boolean {
+export function isStale(plan: Plan | null, config: Config, surfTargets: SurfTarget[] = []): boolean {
   return Boolean(plan && !plan.edited && (
-    plan.routineHash !== routineHash(config.routine) || plan.configHash !== configHash(config)
+    plan.routineHash !== routineHash(config.routine) || plan.configHash !== configHash(config, surfTargets)
   ));
 }
 
@@ -118,6 +121,7 @@ export function generatePlan(
   travelOverride?: TravelOverride | null,
   exception?: ExceptionDay | null,
   todoBlocks: TodoBlock[] = [],
+  surfTargets: SurfTarget[] = [],
 ): Plan {
   const routine = config.routine;
   const weekday = isoWeekday(parseDateKey(date));
@@ -222,6 +226,7 @@ export function generatePlan(
   let freeIndex = 0;
   const restful = Boolean(exception && (exception.kind === 'sick' || exception.kind === 'half' || exception.kind === 'rest'));
   const pendingTodos = [...todoBlocks];
+  const freeWindows: Array<{ start: number; end: number }> = [];
   for (const gap of gaps) {
     let start = gap.start;
     let remaining = gap.end - gap.start;
@@ -245,8 +250,40 @@ export function generatePlan(
       remaining -= todo.minutes;
       pendingTodos.splice(index, 1);
     }
-    if (remaining < 30) continue;
-    for (const size of chunks(remaining)) {
+    if (remaining >= 30) freeWindows.push({ start, end: start + remaining });
+  }
+
+  // 网上冲浪是可选排期：只有设置开启且宿主真的注册了平台工具时才占一块，
+  // 优先放在最晚的空档（通常是晚上），不自动打开网页或播放。
+  const surfTargetsForDay = chooseSurfTargets(config.surf, surfTargets);
+  if (config.surf.enabled && !restful && surfTargetsForDay.length) {
+    for (let index = 0; index < config.surf.perDay; index += 1) {
+      const minutes = config.surf.minutes;
+      let best = -1;
+      for (let window = 0; window < freeWindows.length; window += 1) {
+        const current = freeWindows[window];
+        if (current.end - current.start < minutes) continue;
+        if (best < 0 || current.end > freeWindows[best].end) best = window;
+      }
+      if (best < 0) break;
+      const window = freeWindows[best];
+      const target = surfTargetsForDay[index % surfTargetsForDay.length];
+      placed.push({
+        start: window.end - minutes,
+        end: window.end,
+        title: `刷 ${target.label}`,
+        kind: 'surf',
+        priority: 88,
+        auto: false,
+        note: target.hint,
+      });
+      window.end -= minutes;
+    }
+  }
+
+  for (const window of freeWindows.filter((entry) => entry.end - entry.start >= 30).sort((left, right) => left.start - right.start)) {
+    let start = window.start;
+    for (const size of chunks(window.end - window.start)) {
       const piece = restful ? { title: '休息', kind: 'rest' as BlockKind } : freePiece(freeIndex, `${date}|${routineHash(routine)}`);
       const title = piece.title || `自由 · ${routine.hobbies[freeIndex % routine.hobbies.length]}`;
       placed.push({
@@ -291,7 +328,7 @@ export function generatePlan(
     note: pick(NOTES, hashSeed(`${date}|note`)),
     source: 'auto',
     routineHash: routineHash(routine),
-    configHash: configHash(config),
+    configHash: configHash(config, surfTargets),
     generatedAt: new Date().toISOString(),
     edited: false,
     items,

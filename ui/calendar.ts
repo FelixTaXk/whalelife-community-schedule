@@ -117,8 +117,8 @@ export function calendarPage(data: CalendarData): string {
 <script>
 var API='/plugins/schedule/';
 var state={today:${JSON.stringify(data.today)},weekStart:${JSON.stringify(initialWeek)},regionWeek:${JSON.stringify(startDay)},selected:${JSON.stringify(data.today)},plans:{},exceptions:{},review:null,todos:[],journals:[],editing:null,diaryEditing:null,config:null,status:null,weather:null,busy:false};
-var COLORS={routine:'#8fa5a3',meal:'#d78b4a',commute:'#5b8bb8',work:'#17906f',study:'#2f8f8f',exercise:'#c25b5b',free:'#7a6fbf',chore:'#9a7d55',rest:'#6f8f9a',social:'#b0709a',fixed:'#b39431',travel:'#c07a3e',sleep:'#3f4f55',todo:'#a8682a'};
-var KIND={routine:'日常',meal:'用餐',commute:'路上',work:'正事',study:'学习',exercise:'运动',free:'自由',chore:'家务',rest:'休息',social:'社交',fixed:'固定',travel:'旅行',sleep:'睡觉',todo:'待办'};
+var COLORS={routine:'#8fa5a3',meal:'#d78b4a',commute:'#5b8bb8',work:'#17906f',study:'#2f8f8f',exercise:'#c25b5b',free:'#7a6fbf',chore:'#9a7d55',rest:'#6f8f9a',social:'#b0709a',fixed:'#b39431',travel:'#c07a3e',sleep:'#3f4f55',todo:'#a8682a',surf:'#8b5fbf'};
+var KIND={routine:'日常',meal:'用餐',commute:'路上',work:'正事',study:'学习',exercise:'运动',free:'自由',chore:'家务',rest:'休息',social:'社交',fixed:'固定',travel:'旅行',sleep:'睡觉',todo:'待办',surf:'冲浪'};
 var WEEK=['一','二','三','四','五','六','日'];
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function pad(n){return String(n).padStart(2,'0')}

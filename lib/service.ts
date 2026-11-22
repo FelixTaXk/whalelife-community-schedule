@@ -14,6 +14,7 @@ import { chooseTravelWithModel } from './travel-ai.ts';
 import type { WeatherBridge } from './weather-bridge.ts';
 import type { WeatherDay } from './weather-types.ts';
 import { applyWeatherRules, applyHourlyRules, weatherKey } from './weather-rules.ts';
+import { detectSurfTargets, type SurfTarget } from './surf.ts';
 import { Store } from './store.ts';
 import { addDays, dateKey, formatHHMM, isValidDateKey, isoWeekday, minuteOfDay, parseDateKey, parseHHMM } from './time.ts';
 
@@ -47,6 +48,7 @@ export class ScheduleService {
   private ticking = false;
   private current: Config;
   private weather: WeatherBridge | null = null;
+  private surfCache: SurfTarget[] = [];
 
   lastError = '';
   lastTickAt = '';
@@ -60,6 +62,16 @@ export class ScheduleService {
   /** 由父插件 index 注入；没有天气时一切照旧。 */
   setWeather(weather: WeatherBridge): void {
     this.weather = weather;
+  }
+
+  /** 每次生成/读取设置时刷新：只认可宿主当前真的注册了的冲浪工具。 */
+  surfTargets(): SurfTarget[] {
+    try {
+      this.surfCache = detectSurfTargets(this.ctx.tools.list());
+    } catch {
+      this.surfCache = [];
+    }
+    return this.surfCache;
   }
 
   private liveDay(date: string): WeatherDay | null {
@@ -171,16 +183,25 @@ export class ScheduleService {
   async ensure(date: string, options: EnsureOptions = {}): Promise<Plan> {
     if (!isValidDateKey(date)) throw Error('日期格式应为 YYYY-MM-DD');
     const running = this.inFlight.get(date);
-    if (running) return running;
+    if (running) {
+      // 普通读取复用正在生成的计划；明确重排则先等旧任务收尾，避免拿到旧配置的结果。
+      if (!options.force) return running;
+      try {
+        await running;
+      } catch {
+        // 旧任务失败不阻塞这次强制重排。
+      }
+    }
     const snapshot = this.current;
     const task = (async () => {
       const existing = await this.store.read(date);
       const exception = await this.store.readException(date);
       const effective = exception ? applyException(snapshot, exception) : snapshot;
+      const surfTargets = this.surfTargets();
       const live = this.liveDay(date);
       if (existing && !options.force) {
         if (existing.edited) return existing;
-        const stale = isStale(existing, effective);
+        const stale = isStale(existing, effective, surfTargets);
         const weatherChanged = live ? existing.weatherKey !== weatherKey(live) : false;
         const exceptionChanged = (existing.exceptionKey ?? '') !== exceptionKey(exception);
         if (!stale && !weatherChanged && !exceptionChanged) return existing;
@@ -188,7 +209,7 @@ export class ScheduleService {
       const day = live ?? await this.fetchDay(date);
       const override = options.allowAi === false ? null : await this.travelOverride(effective, date);
       const todoBlocks = await this.todoBlocksFor(date);
-      let plan = generatePlan(effective, date, override, exception, todoBlocks);
+      let plan = generatePlan(effective, date, override, exception, todoBlocks, surfTargets);
       plan = applyWeatherRules(plan, day, effective.routine);
       if (options.allowAi !== false && effective.ai.enabled && effective.ai.model) {
         try {
@@ -260,6 +281,8 @@ export class ScheduleService {
     if (plan.weather?.text) lines.push(`天气：${cleanText(plan.weather.text, 40)}。`);
     if (plan.exception) lines.push(`今天是异常日（${plan.exception.label}）：${cleanText(plan.exception.note, 40)}，安排已按这个状态压缩。`);
     if (plan.weatherAdjusted?.length) lines.push('已按天气调整：' + plan.weatherAdjusted.slice(0, 2).join('；') + '。');
+    const surfItem = [active, next].find((item) => item?.kind === 'surf');
+    if (surfItem?.note) lines.push(`冲浪提示：${cleanText(surfItem.note, 140)}。`);
     lines.push('这是你自己的安排。按现在这个时段自然说话和行动；被问到安排时直接用它，不要编，也不用再调 schedule_now。');
     return lines.join('\n');
   }

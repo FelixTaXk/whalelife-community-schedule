@@ -87,10 +87,12 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   const settings = await request('/plugins/schedule/settings');
   assert.equal(settings.status, 200);
   const settingsHtml = await settings.text();
-  assert.match(settingsHtml, /v0\.8\.0/, '设置页版本号应从 plugin.yaml 读取');
+  assert.match(settingsHtml, /v0\.8\.1/, '设置页版本号应从 plugin.yaml 读取');
   assert.match(settingsHtml, /日程/);
   assert.match(settingsHtml, /人格日记/);
   assert.match(settingsHtml, /journalEnabled/);
+  assert.match(settingsHtml, /网上冲浪排期/);
+  assert.match(settingsHtml, /surfEnabled/);
   assert.match(settingsHtml, /主动提醒/);
   assert.match(settingsHtml, /reminderEnabled/);
   assert.match(settingsHtml, /节假日与假期/);
@@ -348,6 +350,38 @@ test('人格日记：按日程和天气生成、按人格隔离、可编辑并�
   assert.equal(rewritten.ok, true);
   const lastPrompt = requests[requests.length - 1];
   assert.match(String(lastPrompt.messages[0].content), /只用短句，写具体动作。/);
+});
+
+test('网上冲浪排期：检测已注册工具、保存配置并生成对应日程项', async (t) => {
+  const { app, request } = await fixture(t);
+  app.tools.register({
+    name: 'bilibili_browse', danger: 'safe', description: '测试用 B 站浏览', schema: {},
+    run: () => 'ok',
+  });
+  app.tools.register({
+    name: 'bilibili_watch', danger: 'safe', description: '测试用 B 站观看', schema: {},
+    run: () => 'ok',
+  });
+
+  const date = todayKey();
+  const saved = await (await request('/plugins/schedule/config', {
+    action: 'save',
+    config: { enabled: true, surf: { enabled: true, platforms: ['bilibili'], minutes: 30, perDay: 1 } },
+  })).json();
+  assert.equal(saved.config.surf.enabled, true);
+  assert.deepEqual(saved.config.surf.platforms, ['bilibili']);
+
+  const settings = await (await request('/plugins/schedule/settings')).text();
+  assert.match(settings, /B 站/);
+  assert.match(settings, /bilibili_browse/);
+  assert.match(settings, /把刷视频排进自由时间/);
+
+  const generated = await (await request('/plugins/schedule/generate', { date, force: true })).json();
+  const surf = generated.plan.items.find((item: any) => item.kind === 'surf');
+  assert.ok(surf, '应生成一条冲浪日程：' + JSON.stringify(generated.plan.items.slice(-6)));
+  assert.equal(surf.title, '刷 B 站');
+  assert.match(surf.note, /bilibili_browse/);
+  assert.ok(!surf.auto, '冲浪项不应被 AI 当普通空档替换');
 });
 
 test('AI 润色：开启后用模型填空档，失败保留骨架', async (t) => {

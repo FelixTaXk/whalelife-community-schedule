@@ -80,7 +80,7 @@ export function nowInfo(plan: Plan | null, now: Date = new Date()): NowInfo {
     if (start <= minute && minute < end) {
       entry.current = item;
       entry.minutesLeft = end - minute;
-      entry.free = ['free', 'rest', 'chore', 'social'].includes(item.kind);
+      entry.free = ['free', 'rest', 'chore', 'social', 'surf'].includes(item.kind);
     } else if (start > minute && !next) {
       next = item;
     }

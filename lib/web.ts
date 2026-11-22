@@ -91,6 +91,7 @@ export function registerWeb(ctx: Context, service: ScheduleService, weather: Wea
       travelText: formatTravelText(service.config.travel.spots),
       models,
       personas,
+      surfTargets: service.surfTargets().map((target) => ({ id: target.id, label: target.label, tools: [...target.tools] })),
       journal: journal.status(),
       status: {
         lastError: service.status().lastError,

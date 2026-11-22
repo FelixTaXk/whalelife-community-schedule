@@ -14,6 +14,7 @@ export type SettingsData = {
   travelText: string;
   models: Array<{ id: string; name: string; callable: boolean }>;
   personas: Array<{ id: string; name: string }>;
+  surfTargets: Array<{ id: string; label: string; tools: string[] }>;
   journal: { enabled: boolean; time: string; autoTime: boolean; personaId: string; personaName: string; model: string; lastError: string; lastGeneratedAt: string };
   status: { lastError: string; lastTickAt: string; reminderLastError?: string; reminderLastSentAt?: string };
   weather: { available: boolean; summary: string };
@@ -50,6 +51,10 @@ function journalPersonaOptions(personas: SettingsData['personas'], selected: str
 export function settingsPage(data: SettingsData): string {
   const { config: cfg, fixedText, hobbiesText, holidayText, holidayWorkdays, travelText, models, personas, journal, status, ics } = data;
   const currentPreset = presetIdOfRoutine(cfg.routine);
+  const surfOptions = data.surfTargets.map((target) => `<label class="chip"><input type="checkbox" name="surfPlatform" value="${escapeHtml(target.id)}"${cfg.surf.platforms.includes(target.id) ? ' checked' : ''}>${escapeHtml(target.label)}</label>`).join('');
+  const surfStatus = data.surfTargets.length
+    ? `已检测到：${data.surfTargets.map((target) => `${target.label}（${target.tools.join(' / ') || '工具未注册'}）`).join('；')}`
+    : '还没有检测到网上冲浪的 B 站 / 抖音工具。先安装并启用「网上冲浪」及对应子插件，再回来刷新这一页。';
   const presetOptions = [
     `<option value=""${currentPreset ? '' : ' selected'}>自定义（当前作息）</option>`,
     ...PRESETS.map((preset) => `<option value="${escapeHtml(preset.id)}"${preset.id === currentPreset ? ' selected' : ''}>${escapeHtml(preset.name)} · ${escapeHtml(preset.hint)}</option>`),
@@ -154,6 +159,17 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
 </section>
 
 <section class="card">
+  <h2>网上冲浪排期 <span class="pill ${cfg.surf.enabled ? 'warn' : ''}">${cfg.surf.enabled ? '已开启' : '可选'}</span></h2>
+  <div class="grid">
+    <label class="check wide"><input type="checkbox" name="surfEnabled"${cfg.surf.enabled ? ' checked' : ''}> 把刷视频排进自由时间</label>
+    <label>每次时长（分钟）<input type="number" name="surfMinutes" min="10" max="180" value="${cfg.surf.minutes}"></label>
+    <label>每天最多<input type="number" name="surfPerDay" min="1" max="3" value="${cfg.surf.perDay}"></label>
+    <div class="wide"><span class="muted">平台（都不勾 = 当前所有可用平台）</span><div class="days" style="margin-top:6px">${surfOptions || '<span class="muted">暂无可用平台</span>'}</div></div>
+  </div>
+  <p class="hint">${escapeHtml(surfStatus)}<br>开启后只占最晚的空档，生成「刷 B 站 / 刷抖音」这类日程项；到点通过日程提醒和每轮上下文提示人格，由人格自己用冲浪工具，不会自动打开网页、自动播放或调用平台账号。</p>
+</section>
+
+<section class="card">
   <h2>节假日与假期 <span class="pill ${cfg.holiday.enabled ? 'good' : ''}">${cfg.holiday.enabled ? '已开启' : '已关闭'}</span></h2>
   <div class="grid">
     <label class="check wide"><input type="checkbox" name="holidayEnabled"${cfg.holiday.enabled ? ' checked' : ''}> 识别法定节假日，假期不排上课 / 上班</label>
@@ -248,7 +264,7 @@ ${status.lastError ? `<div class="alert bad"><b>上次生成出错</b><br>${esca
     <label class="check wide"><input type="checkbox" name="reminderUsePersona"${cfg.reminder.usePersona ? ' checked' : ''}> 用该人格的语气生成，不只是一句模板</label>
     <label class="check wide"><input type="checkbox" name="reminderRestSilent"${cfg.reminder.restDaySilent ? ' checked' : ''}> 休息日、节假日和异常日不主动提醒</label>
   </div>
-  <p class="hint">只提醒起床、正事、通勤、三餐、运动、固定安排、旅行、待办和睡觉；自由空档不提醒。正事/固定安排/待办可以单独设提前分钟，其余用默认值。日历上每条安排都能点「稍后提醒」，完成后自动作废。QQ 私聊的 peer 一般写 <code>direct:对方QQ号</code>，账号可留空（用当前登录的 QQ）；目标没填全时不会发送。人格 ID 留空时使用宿主当前 Web 人格，填了就必须是已存在的人格。</p>
+  <p class="hint">只提醒起床、正事、通勤、三餐、运动、固定安排、旅行、待办、睡觉和网上冲浪；普通自由空档不提醒。正事/固定安排/待办可以单独设提前分钟，其余用默认值。日历上每条安排都能点「稍后提醒」，完成后自动作废。QQ 私聊的 peer 一般写 <code>direct:对方QQ号</code>，账号可留空（用当前登录的 QQ）；目标没填全时不会发送。人格 ID 留空时使用宿主当前 Web 人格，填了就必须是已存在的人格。</p>
   ${status.reminderLastError ? `<div class="alert bad"><b>上次提醒失败</b><br>${escapeHtml(status.reminderLastError)}</div>` : ''}
   ${status.reminderLastSentAt ? `<p class="hint">上次主动提醒：${escapeHtml(new Date(status.reminderLastSentAt).toLocaleString('zh-CN'))}</p>` : ''}
   <div class="row" style="margin:10px 0 0"><button type="button" id="testReminder">发送测试提醒</button><span class="hint" style="margin:0">测试会立刻走一次当前渠道，不写日程提醒记录。</span></div>
@@ -327,6 +343,8 @@ form.onsubmit=async(e)=>{
       holiday:{enabled:checked('holidayEnabled'),builtin:checked('holidayBuiltin'),student:checked('holidayStudent'),weekendDays:days('holidayWeekendDays')},
       ics:{enabled:checked('icsEnabled'),port:num('icsPort')},
       region:{weekStart:num('weekStart'),language:val('language'),timezone:val('timezone')},
+      surf:{enabled:checked('surfEnabled'),platforms:[...form.querySelectorAll('[name="surfPlatform"]:checked')].map(e=>e.value),
+        minutes:num('surfMinutes'),perDay:num('surfPerDay')},
       travel:{enabled:checked('travelEnabled'),weekend:checked('travelWeekend'),shortHoliday:checked('travelShort'),longHoliday:checked('travelLong'),
         weekendEvery:num('travelEvery'),aiChoose:checked('travelAi'),target:val('travelTarget'),targetFrom:val('travelTargetFrom'),targetTo:val('travelTargetTo'),
         style:val('travelStyle'),budget:num('travelBudget'),currency:val('travelCurrency')},
