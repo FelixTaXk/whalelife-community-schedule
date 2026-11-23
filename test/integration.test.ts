@@ -87,7 +87,7 @@ test('插件加载：页面入口、自动补生成、编辑落盘、停用与�
   const settings = await request('/plugins/schedule/settings');
   assert.equal(settings.status, 200);
   const settingsHtml = await settings.text();
-  assert.match(settingsHtml, /v0\.8\.2/, '设置页版本号应从 plugin.yaml 读取');
+  assert.match(settingsHtml, /v0\.8\.3/, '设置页版本号应从 plugin.yaml 读取');
   assert.match(settingsHtml, /日程/);
   assert.match(settingsHtml, /人格日记/);
   assert.match(settingsHtml, /journalEnabled/);

@@ -7,7 +7,7 @@ import { registerWeb } from './lib/web.ts';
 import { ensureToday, currentOutfit } from './lib/service.ts';
 import { readConfig } from './lib/config.ts';
 
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
